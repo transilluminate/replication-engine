@@ -184,7 +184,7 @@ impl<S: SyncEngineRef> ReplicationEngine<S> {
         info!(
             node_id = %self.config.local_node_id,
             peer_count = self.config.peers.len(),
-            "🚀 Starting replication engine"
+            "Starting replication engine"
         );
 
         // Update state
@@ -194,7 +194,7 @@ impl<S: SyncEngineRef> ReplicationEngine<S> {
         // Initialize cursor store
         let cursor_store = CursorStore::new(&self.config.cursor.sqlite_path).await?;
         *self.cursor_store.write().await = Some(cursor_store);
-        info!(path = %self.config.cursor.sqlite_path, "📁 Cursor store initialized");
+        info!(path = %self.config.cursor.sqlite_path, "Cursor store initialized");
 
         // Connect to peers
         let results = self.peer_manager.connect_all().await;
@@ -425,7 +425,7 @@ impl<S: SyncEngineRef> ReplicationEngine<S> {
     /// 3. Shutdown peer connections
     /// 4. Checkpoint and close cursor store
     pub async fn shutdown(&mut self) {
-        info!("📭 Shutting down replication engine");
+        info!("Shutting down replication engine");
         let _ = self.state_tx.send(EngineState::ShuttingDown);
         metrics::set_engine_state("ShuttingDown");
 
@@ -470,7 +470,7 @@ impl<S: SyncEngineRef> ReplicationEngine<S> {
 
         let _ = self.state_tx.send(EngineState::Stopped);
         metrics::set_engine_state("Stopped");
-        info!("👋 Replication engine stopped");
+        info!("Replication engine stopped");
     }
 
     /// Get the peer manager (for metrics/diagnostics).

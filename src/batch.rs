@@ -19,7 +19,7 @@
 //!
 use crate::error::Result;
 use crate::stream::{CdcEvent, CdcOp};
-use crate::sync_engine::SyncEngineRef;
+use crate::sync_engine::{SyncEngineRef, SyncItem};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -223,7 +223,13 @@ impl<S: SyncEngineRef> BatchProcessor<S> {
 
         // Phase 2: Submit filtered puts
         for (key, data, hash, version) in filtered_puts {
-            match self.sync_engine.submit(key.clone(), data, hash, version).await {
+            let mut item = SyncItem::new(key.clone(), data);
+            item.version = version;
+            // Hash is already computed by SyncItem::new(), but we use the peer's hash
+            // to ensure we detect duplicates correctly during dedup phase
+            item.content_hash = hash;
+            
+            match self.sync_engine.submit(item).await {
                 Ok(()) => {
                     result.submitted += 1;
                 }
@@ -391,10 +397,7 @@ mod tests {
     impl SyncEngineRef for TrackingSyncEngine {
         fn submit(
             &self,
-            _key: String,
-            _content: Vec<u8>,
-            _content_hash: String,
-            _version: u64,
+            _item: SyncItem,
         ) -> std::pin::Pin<Box<dyn std::future::Future<Output = SyncResult<()>> + Send + '_>> {
             self.submit_count.fetch_add(1, Ordering::SeqCst);
             Box::pin(async { Ok(()) })

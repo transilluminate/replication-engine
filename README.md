@@ -56,7 +56,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-replication-engine = "0.1"
+replication-engine = "0.1.0"
 tokio = { version = "1", features = ["full"] }
 ```
 

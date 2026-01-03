@@ -21,7 +21,7 @@ use crate::config::ColdPathConfig;
 use crate::error::ReplicationError;
 use crate::metrics;
 use crate::peer::{PeerConnection, PeerManager};
-use crate::sync_engine::SyncEngineRef;
+use crate::sync_engine::{SyncEngineRef, SyncItem};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
@@ -328,14 +328,12 @@ async fn repair_with_peer<S: SyncEngineRef>(
 
         match peer.get_item(key).await? {
             Some(data) => {
-                // Compute content hash
-                use sha2::{Digest, Sha256};
-                let hash = Sha256::digest(&data);
-                let content_hash = hex::encode(hash);
+                // Create SyncItem - hash is computed automatically by SyncItem::new()
+                let item = SyncItem::new(key.clone(), data);
 
                 // Submit to sync-engine (it will decide if update is needed)
                 if let Err(e) = sync_engine
-                    .submit(key.clone(), data, content_hash, 0)
+                    .submit(item)
                     .await
                 {
                     warn!(key = %key, error = %e, "Failed to submit repaired item");

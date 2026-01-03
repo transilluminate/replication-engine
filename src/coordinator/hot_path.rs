@@ -247,7 +247,6 @@ pub async fn run_tailer<S: SyncEngineRef>(
                         }
                         ReadResult::Empty => {
                             // Stream is empty, nothing to do
-                            debug!("Stream is empty");
                             continue;
                         }
                         ReadResult::Events(events) if events.is_empty() => {

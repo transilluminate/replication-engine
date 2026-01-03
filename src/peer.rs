@@ -769,6 +769,7 @@ mod tests {
             priority: 0,
             circuit_failure_threshold: 3,
             circuit_reset_timeout_sec: 1,
+            redis_prefix: None,
         };
 
         let conn = PeerConnection::new(config);
@@ -1034,6 +1035,7 @@ mod tests {
             priority: 0,
             circuit_failure_threshold: 2, // Low threshold for testing
             circuit_reset_timeout_sec: 30,
+            redis_prefix: None,
         };
 
         let conn = PeerConnection::new(config);

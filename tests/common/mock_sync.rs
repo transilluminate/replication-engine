@@ -4,7 +4,7 @@
 //! Configurable responses for is_current() to test dedup logic.
 //! Includes Merkle tree simulation for cold path testing.
 
-use replication_engine::sync_engine::{BoxFuture, SyncEngineRef, SyncError, SyncResult};
+use replication_engine::sync_engine::{BoxFuture, SyncEngineRef, SyncError, SyncItem, SyncResult};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::RwLock;
@@ -204,10 +204,7 @@ impl Default for MockSyncEngine {
 impl SyncEngineRef for MockSyncEngine {
     fn submit(
         &self,
-        key: String,
-        content: Vec<u8>,
-        content_hash: String,
-        version: u64,
+        item: SyncItem,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = SyncResult<()>> + Send + '_>> {
         Box::pin(async move {
             // Check if we should fail
@@ -218,10 +215,10 @@ impl SyncEngineRef for MockSyncEngine {
 
             // Record the call
             self.submits.write().await.push(SubmitCall {
-                key,
-                content,
-                content_hash,
-                version,
+                key: item.object_id,
+                content: item.content,
+                content_hash: item.content_hash,
+                version: item.version,
             });
             Ok(())
         })
@@ -296,14 +293,8 @@ mod tests {
     async fn test_mock_records_submits() {
         let mock = MockSyncEngine::new();
 
-        mock.submit(
-            "key1".to_string(),
-            b"data".to_vec(),
-            "hash1".to_string(),
-            1,
-        )
-        .await
-        .unwrap();
+        let item = SyncItem::new("key1".to_string(), b"data".to_vec());
+        mock.submit(item).await.unwrap();
 
         let submits = mock.submitted().await;
         assert_eq!(submits.len(), 1);
@@ -331,19 +322,14 @@ mod tests {
         mock.fail_after(2);
 
         // First two succeed
-        assert!(mock
-            .submit("k1".into(), vec![], "h1".into(), 1)
-            .await
-            .is_ok());
-        assert!(mock
-            .submit("k2".into(), vec![], "h2".into(), 2)
-            .await
-            .is_ok());
+        let item1 = SyncItem::new("k1".to_string(), vec![]);
+        assert!(mock.submit(item1).await.is_ok());
+        
+        let item2 = SyncItem::new("k2".to_string(), vec![]);
+        assert!(mock.submit(item2).await.is_ok());
 
         // Third fails
-        assert!(mock
-            .submit("k3".into(), vec![], "h3".into(), 3)
-            .await
-            .is_err());
+        let item3 = SyncItem::new("k3".to_string(), vec![]);
+        assert!(mock.submit(item3).await.is_err());
     }
 }

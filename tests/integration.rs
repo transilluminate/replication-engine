@@ -744,6 +744,7 @@ async fn peer_reconnects_after_redis_restart() {
         priority: 0,
         circuit_failure_threshold: 3,
         circuit_reset_timeout_sec: 5,
+        redis_prefix: None,
     };
 
     let retry_config = RetryConfig::testing();
@@ -784,6 +785,7 @@ async fn peer_reconnects_after_redis_restart() {
         priority: 0,
         circuit_failure_threshold: 3,
         circuit_reset_timeout_sec: 5,
+        redis_prefix: None,
     };
 
     let peer2 = PeerConnection::new(peer_config2);
@@ -1267,6 +1269,7 @@ async fn peer_circuit_breaker_opens_on_failures() {
         priority: 0,
         circuit_failure_threshold: 3,
         circuit_reset_timeout_sec: 60,
+        redis_prefix: None,
     };
 
     let conn = PeerConnection::new(config);

@@ -267,6 +267,11 @@ pub struct PeerConfig {
     /// How long to wait before trying again after circuit opens (seconds).
     #[serde(default = "default_circuit_reset_timeout")]
     pub circuit_reset_timeout_sec: u64,
+
+    /// Redis key prefix used by the peer (e.g., "sync:").
+    /// Must match the peer's sync-engine configuration.
+    #[serde(default)]
+    pub redis_prefix: Option<String>,
 }
 
 fn default_circuit_failure_threshold() -> u32 {
@@ -279,9 +284,10 @@ fn default_circuit_reset_timeout() -> u64 {
 
 impl PeerConfig {
     /// Get the CDC stream key for this peer.
-    /// Currently fixed to `__local__:cdc`.
+    /// Uses the configured prefix + "__local__:cdc".
     pub fn cdc_stream_key(&self) -> String {
-        "__local__:cdc".to_string()
+        let prefix = self.redis_prefix.as_deref().unwrap_or("");
+        format!("{}__local__:cdc", prefix)
     }
 
     /// Create a peer config for testing.
@@ -292,6 +298,7 @@ impl PeerConfig {
             priority: 0,
             circuit_failure_threshold: 5,
             circuit_reset_timeout_sec: 30,
+            redis_prefix: None,
         }
     }
 }

@@ -11,6 +11,9 @@ keywords = ["replication", "sync", "distributed", "crdt", "mesh"]
 categories = ["database", "network-programming"]
 
 [dependencies]
+# TODO: use crates.io when published
+sync-engine = { path = "../sync-engine" }
+
 # Async runtime
 tokio = { version = "1", features = ["full", "sync", "time", "signal"] }
 
@@ -51,9 +54,6 @@ futures = "0.3"         # Async utilities
 recloser = "1"          # Circuit breaker pattern
 governor = "0.8"        # Rate limiting (token bucket)
 
-# Optional: sync-engine integration (when used as library)
-# sync-engine = { path = "../sync-engine", optional = true }
-
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3"
@@ -75,8 +75,6 @@ fuzz = true
 
 [features]
 default = []
-# Enable when we have sync-engine as a dependency
-# sync-engine-integration = ["sync-engine"]
 
 [lib]
 name = "replication_engine"

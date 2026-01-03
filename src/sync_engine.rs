@@ -1,12 +1,13 @@
 //! Sync engine integration traits.
 //!
 //! Defines the interface for integrating with a sync/storage backend.
-//! Callers should implement [`SyncEngineRef`] for their specific backend.
+//! Uses `sync_engine::SyncItem` directly for tight integration with the sync-engine crate.
 //!
 //! # Example
 //!
 //! ```rust,no_run
 //! use replication_engine::sync_engine::{SyncEngineRef, SyncResult, SyncError, BoxFuture};
+//! use sync_engine::SyncItem;
 //! use std::pin::Pin;
 //! use std::future::Future;
 //!
@@ -17,13 +18,7 @@
 //!         Box::pin(async move { Ok(true) })
 //!     }
 //!
-//!     fn submit(
-//!         &self,
-//!         _key: String,
-//!         _content: Vec<u8>,
-//!         _hash: String,
-//!         _version: u64,
-//!     ) -> Pin<Box<dyn Future<Output = SyncResult<()>> + Send + '_>> {
+//!     fn submit(&self, item: SyncItem) -> Pin<Box<dyn Future<Output = SyncResult<()>> + Send + '_>> {
 //!         Box::pin(async move { Ok(()) })
 //!     }
 //!
@@ -47,6 +42,9 @@
 
 use std::future::Future;
 use std::pin::Pin;
+
+// Re-export SyncItem for convenience
+pub use sync_engine::SyncItem;
 
 /// Result type for sync engine operations.
 pub type SyncResult<T> = std::result::Result<T, SyncError>;
@@ -78,12 +76,10 @@ pub trait SyncEngineRef: Send + Sync + 'static {
     /// Submit an item to the local sync-engine.
     ///
     /// This is how we write replicated data from peers.
+    /// The `SyncItem` contains all necessary fields (key, content, hash, version).
     fn submit(
         &self,
-        key: String,
-        content: Vec<u8>,
-        content_hash: String,
-        version: u64,
+        item: SyncItem,
     ) -> Pin<Box<dyn Future<Output = SyncResult<()>> + Send + '_>>;
 
     /// Delete an item from the local sync-engine.
@@ -121,16 +117,14 @@ pub struct NoOpSyncEngine;
 impl SyncEngineRef for NoOpSyncEngine {
     fn submit(
         &self,
-        key: String,
-        content: Vec<u8>,
-        content_hash: String,
-        _version: u64,
+        item: SyncItem,
     ) -> Pin<Box<dyn Future<Output = SyncResult<()>> + Send + '_>> {
         Box::pin(async move {
             tracing::debug!(
-                key = %key,
-                hash = %content_hash,
-                len = content.len(),
+                key = %item.object_id,
+                hash = %item.content_hash,
+                len = item.content.len(),
+                version = item.version,
                 "NoOp: would submit item"
             );
             Ok(())
@@ -182,12 +176,8 @@ mod tests {
         let engine = NoOpSyncEngine;
         
         // Submit should succeed
-        let result = engine.submit(
-            "test.key".to_string(),
-            b"data".to_vec(),
-            "hash123".to_string(),
-            1,
-        ).await;
+        let item = SyncItem::new("test.key".to_string(), b"data".to_vec());
+        let result = engine.submit(item).await;
         assert!(result.is_ok());
     }
 
@@ -197,12 +187,8 @@ mod tests {
         
         // Large content should work
         let large_content = vec![0u8; 1024 * 1024]; // 1MB
-        let result = engine.submit(
-            "large.key".to_string(),
-            large_content,
-            "bighash".to_string(),
-            999,
-        ).await;
+        let item = SyncItem::new("large.key".to_string(), large_content);
+        let result = engine.submit(item).await;
         assert!(result.is_ok());
     }
 
