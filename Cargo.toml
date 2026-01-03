@@ -1,0 +1,89 @@
+[package]
+name = "replication-engine"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "AGPL-3.0"
+authors = ["Adrian Robinson <adrian.j.robinson@gmail.com>"]
+description = "Mesh replication agent for sync-engine nodes"
+repository = "https://github.com/transilluminate/replication-engine"
+keywords = ["replication", "sync", "distributed", "crdt", "mesh"]
+categories = ["database", "network-programming"]
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full", "sync", "time", "signal"] }
+
+# Redis client (streams, XREAD)
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager", "streams"] }
+
+# Local cursor persistence (SQLite WAL pattern)
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Compression (for CDC payloads)
+zstd = "0.13"
+
+# Hashing (for content dedup)
+sha2 = "0.10"
+hex = "0.4"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+metrics = "0.24"
+# Note: metrics-exporter-prometheus is owned by the daemon, not this lib
+
+# Utilities
+dashmap = "6"           # Concurrent hashmap for peer state
+parking_lot = "0.12"    # Fast mutexes
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+humantime = "2"         # Human-readable duration parsing
+futures = "0.3"         # Async utilities
+recloser = "1"          # Circuit breaker pattern
+governor = "0.8"        # Rate limiting (token bucket)
+
+# Optional: sync-engine integration (when used as library)
+# sync-engine = { path = "../sync-engine", optional = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = "3"
+test-log = { version = "0.2", features = ["trace"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Integration testing with real containers
+testcontainers = "0.15"
+async-trait = "0.1"
+
+# Property-based testing
+proptest = "1"
+arbitrary = { version = "1", features = ["derive"] }
+
+# Fuzzing support (for cargo-fuzz)
+# Run with: cargo +nightly fuzz run fuzz_parse_entry
+[package.metadata.cargo-fuzz]
+fuzz = true
+
+[features]
+default = []
+# Enable when we have sync-engine as a dependency
+# sync-engine-integration = ["sync-engine"]
+
+[lib]
+name = "replication_engine"
+path = "src/lib.rs"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

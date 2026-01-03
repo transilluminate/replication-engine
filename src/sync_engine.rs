@@ -1,0 +1,307 @@
+//! Sync engine integration traits.
+//!
+//! Defines the interface for integrating with a sync/storage backend.
+//! Callers should implement [`SyncEngineRef`] for their specific backend.
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use replication_engine::sync_engine::{SyncEngineRef, SyncResult, SyncError, BoxFuture};
+//! use std::pin::Pin;
+//! use std::future::Future;
+//!
+//! struct MyBackend { /* ... */ }
+//!
+//! impl SyncEngineRef for MyBackend {
+//!     fn is_current(&self, _key: &str, _hash: &str) -> Pin<Box<dyn Future<Output = SyncResult<bool>> + Send + '_>> {
+//!         Box::pin(async move { Ok(true) })
+//!     }
+//!
+//!     fn submit(
+//!         &self,
+//!         _key: String,
+//!         _content: Vec<u8>,
+//!         _hash: String,
+//!         _version: u64,
+//!     ) -> Pin<Box<dyn Future<Output = SyncResult<()>> + Send + '_>> {
+//!         Box::pin(async move { Ok(()) })
+//!     }
+//!
+//!     fn delete(&self, _key: String) -> Pin<Box<dyn Future<Output = SyncResult<bool>> + Send + '_>> {
+//!         Box::pin(async move { Ok(true) })
+//!     }
+//!
+//!     fn get_merkle_root(&self) -> BoxFuture<'_, Option<[u8; 32]>> {
+//!         Box::pin(async move { Ok(None) })
+//!     }
+//!
+//!     fn get_merkle_children(&self, _path: &str) -> BoxFuture<'_, Vec<(String, [u8; 32])>> {
+//!         Box::pin(async move { Ok(vec![]) })
+//!     }
+//!
+//!     fn get(&self, _key: &str) -> BoxFuture<'_, Option<Vec<u8>>> {
+//!         Box::pin(async move { Ok(None) })
+//!     }
+//! }
+//! ```
+
+use std::future::Future;
+use std::pin::Pin;
+
+/// Result type for sync engine operations.
+pub type SyncResult<T> = std::result::Result<T, SyncError>;
+
+/// Type alias for boxed async futures (reduces trait signature complexity).
+pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = SyncResult<T>> + Send + 'a>>;
+
+/// Simplified error for sync engine operations.
+#[derive(Debug, Clone)]
+pub struct SyncError(pub String);
+
+impl std::fmt::Display for SyncError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for SyncError {}
+
+/// Trait defining what we need from sync-engine.
+///
+/// The daemon provides an implementation of this trait, allowing us to:
+/// 1. Write replicated data (`submit`)
+/// 2. Check for duplicates (`is_current`)
+/// 3. Query Merkle tree for cold path repair
+///
+/// This trait allows testing with mocks and decouples us from sync-engine internals.
+pub trait SyncEngineRef: Send + Sync + 'static {
+    /// Submit an item to the local sync-engine.
+    ///
+    /// This is how we write replicated data from peers.
+    fn submit(
+        &self,
+        key: String,
+        content: Vec<u8>,
+        content_hash: String,
+        version: u64,
+    ) -> Pin<Box<dyn Future<Output = SyncResult<()>> + Send + '_>>;
+
+    /// Delete an item from the local sync-engine.
+    fn delete(
+        &self,
+        key: String,
+    ) -> Pin<Box<dyn Future<Output = SyncResult<bool>> + Send + '_>>;
+
+    /// Check if we already have content with this hash.
+    ///
+    /// Returns `true` if the item exists AND its content hash matches.
+    /// Used for CDC deduplication (loop prevention).
+    fn is_current(
+        &self,
+        key: &str,
+        content_hash: &str,
+    ) -> Pin<Box<dyn Future<Output = SyncResult<bool>> + Send + '_>>;
+
+    /// Get the Merkle root hash (for cold path comparison).
+    fn get_merkle_root(&self) -> BoxFuture<'_, Option<[u8; 32]>>;
+
+    /// Get children of a Merkle path (for cold path drill-down).
+    fn get_merkle_children(&self, path: &str) -> BoxFuture<'_, Vec<(String, [u8; 32])>>;
+
+    /// Fetch an item by key (for cold path repair).
+    fn get(&self, key: &str) -> BoxFuture<'_, Option<Vec<u8>>>;
+}
+
+/// A no-op implementation for testing/standalone mode.
+///
+/// Logs operations but doesn't actually store anything.
+#[derive(Clone)]
+pub struct NoOpSyncEngine;
+
+impl SyncEngineRef for NoOpSyncEngine {
+    fn submit(
+        &self,
+        key: String,
+        content: Vec<u8>,
+        content_hash: String,
+        _version: u64,
+    ) -> Pin<Box<dyn Future<Output = SyncResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            tracing::debug!(
+                key = %key,
+                hash = %content_hash,
+                len = content.len(),
+                "NoOp: would submit item"
+            );
+            Ok(())
+        })
+    }
+
+    fn delete(
+        &self,
+        key: String,
+    ) -> Pin<Box<dyn Future<Output = SyncResult<bool>> + Send + '_>> {
+        Box::pin(async move {
+            tracing::debug!(key = %key, "NoOp: would delete item");
+            Ok(true)
+        })
+    }
+
+    fn is_current(
+        &self,
+        key: &str,
+        content_hash: &str,
+    ) -> Pin<Box<dyn Future<Output = SyncResult<bool>> + Send + '_>> {
+        let key = key.to_string();
+        let hash = content_hash.to_string();
+        Box::pin(async move {
+            tracing::trace!(key = %key, hash = %hash, "NoOp: is_current check (returning false)");
+            Ok(false) // Always apply in no-op mode
+        })
+    }
+
+    fn get_merkle_root(&self) -> BoxFuture<'_, Option<[u8; 32]>> {
+        Box::pin(async { Ok(None) })
+    }
+
+    fn get_merkle_children(&self, _path: &str) -> BoxFuture<'_, Vec<(String, [u8; 32])>> {
+        Box::pin(async { Ok(vec![]) })
+    }
+
+    fn get(&self, _key: &str) -> BoxFuture<'_, Option<Vec<u8>>> {
+        Box::pin(async { Ok(None) })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_noop_sync_engine_submit() {
+        let engine = NoOpSyncEngine;
+        
+        // Submit should succeed
+        let result = engine.submit(
+            "test.key".to_string(),
+            b"data".to_vec(),
+            "hash123".to_string(),
+            1,
+        ).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_noop_sync_engine_submit_large_content() {
+        let engine = NoOpSyncEngine;
+        
+        // Large content should work
+        let large_content = vec![0u8; 1024 * 1024]; // 1MB
+        let result = engine.submit(
+            "large.key".to_string(),
+            large_content,
+            "bighash".to_string(),
+            999,
+        ).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_noop_sync_engine_delete() {
+        let engine = NoOpSyncEngine;
+        
+        // Delete should succeed and return true
+        let result = engine.delete("some.key".to_string()).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap()); // NoOp always returns true
+    }
+
+    #[tokio::test]
+    async fn test_noop_sync_engine_is_current() {
+        let engine = NoOpSyncEngine;
+        
+        // is_current should return false (no dedup in noop mode)
+        let result = engine.is_current("test.key", "hash123").await;
+        assert!(result.is_ok());
+        assert!(!result.unwrap()); // Always false in noop mode
+    }
+
+    #[tokio::test]
+    async fn test_noop_sync_engine_is_current_various_keys() {
+        let engine = NoOpSyncEngine;
+        
+        // All keys should return false
+        assert!(!engine.is_current("key1", "hash1").await.unwrap());
+        assert!(!engine.is_current("key2", "hash2").await.unwrap());
+        assert!(!engine.is_current("", "").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_noop_sync_engine_get_merkle_root() {
+        let engine = NoOpSyncEngine;
+        
+        // Should return None
+        let result = engine.get_merkle_root().await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_noop_sync_engine_get_merkle_children() {
+        let engine = NoOpSyncEngine;
+        
+        // Should return empty vec
+        let result = engine.get_merkle_children("some/path").await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+
+        // Even for empty path
+        let result = engine.get_merkle_children("").await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_noop_sync_engine_get() {
+        let engine = NoOpSyncEngine;
+        
+        // Should return None
+        let result = engine.get("some.key").await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_sync_error_display() {
+        let error = SyncError("test error message".to_string());
+        assert_eq!(format!("{}", error), "test error message");
+    }
+
+    #[test]
+    fn test_sync_error_debug() {
+        let error = SyncError("debug message".to_string());
+        let debug = format!("{:?}", error);
+        assert!(debug.contains("debug message"));
+    }
+
+    #[test]
+    fn test_sync_error_is_error() {
+        let error = SyncError("error".to_string());
+        // Verify it implements std::error::Error
+        let _: &dyn std::error::Error = &error;
+    }
+
+    #[test]
+    fn test_noop_sync_engine_clone() {
+        let engine = NoOpSyncEngine;
+        let _cloned = engine.clone();
+        // Just verify Clone works
+    }
+
+    #[test]
+    fn test_sync_error_clone() {
+        let error = SyncError("original".to_string());
+        let cloned = error.clone();
+        assert_eq!(error.0, cloned.0);
+    }
+}

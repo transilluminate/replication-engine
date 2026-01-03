@@ -1,0 +1,44 @@
+[package]
+name = "replication-engine-fuzz"
+version = "0.0.0"
+authors = ["Automatically generated"]
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+
+[dependencies.replication-engine]
+path = ".."
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "fuzz_decompress"
+path = "fuzz_targets/fuzz_decompress.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_stream_id"
+path = "fuzz_targets/fuzz_stream_id.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_lag_calc"
+path = "fuzz_targets/fuzz_lag_calc.rs"
+test = false
+doc = false
+bench = false
