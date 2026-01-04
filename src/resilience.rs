@@ -1,3 +1,6 @@
+// Copyright (c) 2025-2026 Adrian Robinson. Licensed under the AGPL-3.0.
+// See LICENSE file in the project root for full license text.
+
 //! Resilience utilities: retry logic, backoff, rate limiting, bulkheads.
 //!
 //! This module provides patterns to protect services from overload:

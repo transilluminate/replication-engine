@@ -1,3 +1,6 @@
+// Copyright (c) 2025-2026 Adrian Robinson. Licensed under the AGPL-3.0.
+// See LICENSE file in the project root for full license text.
+
 //! Testcontainers setup for Redis.
 //!
 //! Provides helpers to spin up Redis containers for integration tests.

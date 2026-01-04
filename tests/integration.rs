@@ -1,3 +1,6 @@
+// Copyright (c) 2025-2026 Adrian Robinson. Licensed under the AGPL-3.0.
+// See LICENSE file in the project root for full license text.
+
 //! Integration Tests for Replication Engine
 //!
 //! Tests use testcontainers for portability - no external docker-compose required.
