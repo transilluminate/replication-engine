@@ -45,10 +45,12 @@ Node A                                   Node B
 - **Content Deduplication**: Skip items already present via content hash comparison
 - **Crash Recovery**: SQLite WAL-mode cursor persistence survives Redis restarts
 - **Circuit Breakers**: Protect peers from cascade failures during outages
+- **Backpressure Handling**: Pauses ingestion when sync-engine is under memory pressure
 - **Adaptive Batching**: AIMD-style batch sizing based on replication lag
 - **Graceful Shutdown**: Drain in-flight batches before exit
 - **Prometheus Metrics**: Comprehensive observability for operations
 - **W3C Trace Context**: Propagate trace IDs from CDC events for distributed tracing
+- **TLS Support**: Use `rediss://` URLs for encrypted peer connections
 
 ## Quick Start
 
@@ -210,13 +212,13 @@ replication:
   
   peers:
     - node_id: "uk.node.manchester-1"
-      redis_url: "redis://peer1:6379"
+      redis_url: "redis://peer1:6379"        # or rediss:// for TLS
       priority: 0
       circuit_failure_threshold: 5
       circuit_reset_timeout_sec: 30
     
     - node_id: "uk.node.edinburgh-1"
-      redis_url: "redis://peer2:6379"
+      redis_url: "rediss://user:pass@peer2:6379"  # TLS + auth
       priority: 1
   
   cursor:
@@ -234,7 +236,7 @@ Comprehensive test suite with 200+ tests covering unit, property-based, chaos, a
 | **Property Tests** | 16 ✅ | Proptest fuzzing for invariants |
 | **Chaos Tests** | 11 ✅ | Failure injection, corruption handling |
 | **Integration Tests** | 30 ✅ | Real Redis via testcontainers |
-| **Total** | **287** ✅ | ~75% code coverage |
+| **Total** | **287** ✅ | ~85% code coverage |
 
 ### Fuzz Testing
 

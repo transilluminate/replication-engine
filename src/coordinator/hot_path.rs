@@ -336,6 +336,20 @@ pub async fn run_tailer<S: SyncEngineRef>(
                                 limiter.acquire_many(event_count as u32).await;
                             }
 
+                            // Backpressure: if sync-engine is under critical load, pause ingestion
+                            // This prevents wasting CPU parsing events that will be rejected
+                            if !sync_engine.should_accept_writes() {
+                                metrics::record_backpressure_pause(&peer_id);
+                                warn!(
+                                    peer_id = %peer_id,
+                                    event_count,
+                                    "Sync-engine under pressure, pausing ingestion"
+                                );
+                                // Wait before retrying - don't consume events we can't store
+                                tokio::time::sleep(Duration::from_millis(100)).await;
+                                continue;
+                            }
+
                             // Process events with tracing context
                             for event in events {
                                 // Create span with trace context from upstream if available

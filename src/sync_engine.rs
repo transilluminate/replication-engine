@@ -14,6 +14,10 @@
 //! struct MyBackend { /* ... */ }
 //!
 //! impl SyncEngineRef for MyBackend {
+//!     fn should_accept_writes(&self) -> bool {
+//!         true // Always accept in example
+//!     }
+//!
 //!     fn is_current(&self, _key: &str, _hash: &str) -> Pin<Box<dyn Future<Output = SyncResult<bool>> + Send + '_>> {
 //!         Box::pin(async move { Ok(true) })
 //!     }
@@ -43,8 +47,8 @@
 use std::future::Future;
 use std::pin::Pin;
 
-// Re-export SyncItem for convenience
-pub use sync_engine::SyncItem;
+// Re-export SyncItem and BackpressureLevel for convenience
+pub use sync_engine::{BackpressureLevel, SyncItem};
 
 /// Result type for sync engine operations.
 pub type SyncResult<T> = std::result::Result<T, SyncError>;
@@ -73,6 +77,17 @@ impl std::error::Error for SyncError {}
 ///
 /// This trait allows testing with mocks and decouples us from sync-engine internals.
 pub trait SyncEngineRef: Send + Sync + 'static {
+    /// Check if the sync-engine is accepting writes (backpressure check).
+    ///
+    /// Returns `false` when the engine is under critical pressure (>= 90% memory).
+    /// Callers should pause ingestion when this returns `false` to avoid
+    /// wasting CPU on events that will be rejected.
+    ///
+    /// Default implementation returns `true` (always accept).
+    fn should_accept_writes(&self) -> bool {
+        true
+    }
+
     /// Submit an item to the local sync-engine.
     ///
     /// This is how we write replicated data from peers.
@@ -106,6 +121,76 @@ pub trait SyncEngineRef: Send + Sync + 'static {
 
     /// Fetch an item by key (for cold path repair).
     fn get(&self, key: &str) -> BoxFuture<'_, Option<Vec<u8>>>;
+}
+
+/// Implementation of SyncEngineRef for the real SyncEngine.
+///
+/// This allows the replication engine to drive the real storage backend directly.
+impl SyncEngineRef for sync_engine::SyncEngine {
+    fn should_accept_writes(&self) -> bool {
+        self.pressure().should_accept_writes()
+    }
+
+    fn submit(
+        &self,
+        item: SyncItem,
+    ) -> Pin<Box<dyn Future<Output = SyncResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            self.submit(item).await.map_err(|e| SyncError(e.to_string()))
+        })
+    }
+
+    fn delete(
+        &self,
+        key: String,
+    ) -> Pin<Box<dyn Future<Output = SyncResult<bool>> + Send + '_>> {
+        Box::pin(async move {
+            self.delete(&key).await.map_err(|e| SyncError(e.to_string()))
+        })
+    }
+
+    fn is_current(
+        &self,
+        key: &str,
+        content_hash: &str,
+    ) -> Pin<Box<dyn Future<Output = SyncResult<bool>> + Send + '_>> {
+        let key = key.to_string();
+        let hash = content_hash.to_string();
+        Box::pin(async move {
+            // Check if we have the item and the hash matches
+            match self.get_verified(&key).await {
+                Ok(Some(item)) => Ok(item.content_hash == hash),
+                Ok(None) => Ok(false),
+                Err(_) => Ok(false), // If corrupt or error, assume not current to force re-sync
+            }
+        })
+    }
+
+    fn get_merkle_root(&self) -> BoxFuture<'_, Option<[u8; 32]>> {
+        Box::pin(async move {
+            self.get_merkle_root().await.map_err(|e| SyncError(e.to_string()))
+        })
+    }
+
+    fn get_merkle_children(&self, path: &str) -> BoxFuture<'_, Vec<(String, [u8; 32])>> {
+        let path = path.to_string();
+        Box::pin(async move {
+            let children_map = self.get_merkle_children(&path).await.map_err(|e| SyncError(e.to_string()))?;
+            // Convert BTreeMap to Vec
+            Ok(children_map.into_iter().collect())
+        })
+    }
+
+    fn get(&self, key: &str) -> BoxFuture<'_, Option<Vec<u8>>> {
+        let key = key.to_string();
+        Box::pin(async move {
+            match self.get(&key).await {
+                Ok(Some(item)) => Ok(Some(item.content)),
+                Ok(None) => Ok(None),
+                Err(e) => Err(SyncError(e.to_string())),
+            }
+        })
+    }
 }
 
 /// A no-op implementation for testing/standalone mode.

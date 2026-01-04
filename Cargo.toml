@@ -11,8 +11,8 @@ keywords = ["replication", "sync", "distributed", "crdt", "mesh"]
 categories = ["database", "network-programming"]
 
 [dependencies]
-# TODO: use crates.io when published
-sync-engine = { path = "../sync-engine" }
+# Foundation for replication-engine
+sync-engine = "0.2.6"
 
 # Async runtime
 tokio = { version = "1", features = ["full", "sync", "time", "signal"] }

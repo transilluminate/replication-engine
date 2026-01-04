@@ -263,6 +263,11 @@ pub fn record_stream_trimmed(peer_id: &str) {
     counter!("replication_stream_trimmed_total", "peer_id" => peer_id.to_string()).increment(1);
 }
 
+/// Record backpressure pause (sync-engine under load).
+pub fn record_backpressure_pause(peer_id: &str) {
+    counter!("replication_backpressure_pauses_total", "peer_id" => peer_id.to_string()).increment(1);
+}
+
 /// Record stream read result.
 pub fn record_stream_read(peer_id: &str, events_count: usize, duration: Duration) {
     counter!("replication_stream_reads_total", "peer_id" => peer_id.to_string()).increment(1);
