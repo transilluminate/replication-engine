@@ -65,7 +65,11 @@ pub mod sync_engine;
 
 // Re-exports for convenience
 pub use circuit_breaker::{CircuitBreaker, CircuitConfig, CircuitError, SyncEngineCircuit};
-pub use config::{ReplicationConfig, ReplicationSettings, PeerConfig, HotPathConfig, ColdPathConfig};
+pub use config::{
+    ReplicationConfig, ReplicationSettings, PeerConfig, 
+    HotPathConfig, ColdPathConfig, CursorConfig, 
+    SloConfig, PeerHealthConfig,
+};
 pub use coordinator::ReplicationEngine;
 pub use error::{ReplicationError, Result};
 pub use cursor::CursorStore;
