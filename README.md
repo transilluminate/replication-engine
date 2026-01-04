@@ -7,7 +7,7 @@ Mesh replication agent for `sync-engine` nodes with bidirectional data synchroni
 
 ## Philosophy: Two-Path Replication
 
-replication-engine provides reliable data sync across a cluster of instances using two complementary strategies:
+replication-engine provides reliable data sync across a cluster of [sync-engine](https://github.com/transilluminate/sync-engine/) instances using two complementary strategies:
 - **Hot Path** → Real-time CDC stream tailing for low-latency sync
 - **Cold Path** → Periodic Merkle tree comparison for guaranteed consistency
 
@@ -235,8 +235,8 @@ Comprehensive test suite with 200+ tests covering unit, property-based, chaos, a
 | **Unit Tests** | 230 ✅ | Fast, no external deps |
 | **Property Tests** | 16 ✅ | Proptest fuzzing for invariants |
 | **Chaos Tests** | 11 ✅ | Failure injection, corruption handling |
-| **Integration Tests** | 30 ✅ | Real Redis via testcontainers |
-| **Total** | **287** ✅ | ~85% code coverage |
+| **Integration Tests** | 44 ✅ | Real Redis via testcontainers |
+| **Total** | **280+** ✅ | ~85% code coverage |
 
 ### Fuzz Testing
 
@@ -287,6 +287,7 @@ Prometheus-style metrics exposed for operational visibility:
 | `replication_batch_flush_duration_seconds` | Histogram | Flush latency |
 | `replication_lag_ms` | Gauge | Cursor lag behind stream head |
 | `replication_lag_events` | Gauge | Estimated events behind |
+| `replication_backpressure_pauses_total` | Counter | Ingestion pauses due to sync-engine pressure |
 | **Cold Path** |||
 | `replication_repair_cycles_total` | Counter | Merkle repair cycles run |
 | `replication_repair_items_fetched_total` | Counter | Items fetched from peers |
@@ -304,15 +305,15 @@ Prometheus-style metrics exposed for operational visibility:
 ```
 src/
 ├── lib.rs              # Public API exports
-├── main.rs             # Standalone binary (for testing)
 ├── config.rs           # Configuration types
 ├── error.rs            # Error types
+├── sync_engine.rs      # SyncEngineRef trait + SyncItem integration
 ├── cursor.rs           # SQLite cursor persistence
 ├── peer.rs             # Peer connection management
 ├── stream.rs           # CDC stream parsing + decompression
 ├── batch.rs            # Batch processor with deduplication
 ├── circuit_breaker.rs  # Circuit breaker pattern
-├── resilience.rs       # Retry logic with backoff
+├── resilience.rs       # Retry, rate limiting, bulkhead
 ├── metrics.rs          # Prometheus metrics
 └── coordinator/
     ├── mod.rs          # Main ReplicationEngine
@@ -322,12 +323,18 @@ src/
 
 tests/
 ├── property_tests.rs   # Proptest-based property testing
-├── chaos_tests.rs      # Chaos/stress testing
+├── chaos_tests.rs      # Failure injection, corruption handling
 ├── integration.rs      # Testcontainers integration tests
-└── common/             # Test utilities
+└── common/
+    ├── mod.rs          # Test utilities
+    ├── containers.rs   # Redis testcontainer helpers
+    └── mock_sync.rs    # Mock SyncEngineRef for testing
 
 fuzz/
-└── fuzz_targets/       # Cargo-fuzz targets
+└── fuzz_targets/
+    ├── fuzz_decompress.rs  # Arbitrary byte decompression
+    ├── fuzz_stream_id.rs   # Stream ID comparison
+    └── fuzz_lag_calc.rs    # Lag calculation
 ```
 
 ## Integration with redsqrl-daemon
