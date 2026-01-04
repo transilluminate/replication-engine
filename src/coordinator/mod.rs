@@ -21,7 +21,7 @@ mod types;
 mod hot_path;
 mod cold_path;
 
-pub use types::EngineState;
+pub use types::{EngineState, HealthCheck, PeerHealth};
 
 use crate::circuit_breaker::SyncEngineCircuit;
 use crate::config::ReplicationConfig;
@@ -168,6 +168,92 @@ impl<S: SyncEngineRef> ReplicationEngine<S> {
     /// Check if engine is running.
     pub fn is_running(&self) -> bool {
         matches!(self.state(), EngineState::Running)
+    }
+
+    /// Get comprehensive health status for monitoring endpoints.
+    ///
+    /// Returns a [`HealthCheck`] struct containing:
+    /// - Engine state and readiness
+    /// - Sync-engine backpressure status
+    /// - Per-peer connectivity, circuit breaker state, and lag
+    ///
+    /// **Performance**: This method performs no network I/O. All data is
+    /// collected from cached internal state (atomics, mutexes, watch channels).
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let health = engine.health_check().await;
+    /// 
+    /// // For /ready endpoint
+    /// if health.ready {
+    ///     HttpResponse::Ok()
+    /// } else {
+    ///     HttpResponse::ServiceUnavailable()
+    /// }
+    ///
+    /// // For /health endpoint (full diagnostics)
+    /// HttpResponse::Ok().json(serde_json::json!({
+    ///     "healthy": health.healthy,
+    ///     "state": health.state.to_string(),
+    ///     "peers_connected": health.peers_connected,
+    ///     "peers_total": health.peers_total,
+    ///     "sync_engine_accepting_writes": health.sync_engine_accepting_writes,
+    /// }))
+    /// ```
+    pub async fn health_check(&self) -> HealthCheck {
+        use crate::peer::PeerCircuitState;
+        
+        let state = self.state();
+        let sync_engine_accepting_writes = self.sync_engine.should_accept_writes();
+        
+        // Collect peer health
+        let all_peers = self.peer_manager.all();
+        let peers_total = all_peers.len();
+        let mut peers = Vec::with_capacity(peers_total);
+        let mut peers_connected = 0;
+        let mut peers_circuit_open = 0;
+        let peers_catching_up = self.catching_up_count.load(std::sync::atomic::Ordering::Relaxed);
+        
+        for peer in all_peers {
+            let connected = peer.is_connected().await;
+            let circuit_state = peer.circuit_state().await;
+            let circuit_open = circuit_state == PeerCircuitState::Open;
+            
+            if connected {
+                peers_connected += 1;
+            }
+            if circuit_open {
+                peers_circuit_open += 1;
+            }
+            
+            peers.push(PeerHealth {
+                node_id: peer.node_id().to_string(),
+                connected,
+                circuit_state,
+                circuit_open,
+                failure_count: peer.failure_count(),
+                millis_since_success: peer.millis_since_success(),
+                lag_ms: None, // TODO: Track per-peer lag in hot path
+                catching_up: false, // TODO: Track per-peer catching up state
+            });
+        }
+        
+        // Determine readiness and health
+        let ready = state == EngineState::Running && peers_connected > 0;
+        let healthy = ready && sync_engine_accepting_writes;
+        
+        HealthCheck {
+            state,
+            ready,
+            sync_engine_accepting_writes,
+            peers_total,
+            peers_connected,
+            peers_circuit_open,
+            peers_catching_up,
+            peers,
+            healthy,
+        }
     }
 
     /// Start the replication engine.

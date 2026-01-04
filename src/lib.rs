@@ -70,9 +70,9 @@ pub use config::{
     HotPathConfig, ColdPathConfig, CursorConfig, 
     SloConfig, PeerHealthConfig,
 };
-pub use coordinator::ReplicationEngine;
+pub use coordinator::{ReplicationEngine, EngineState, HealthCheck, PeerHealth};
 pub use error::{ReplicationError, Result};
 pub use cursor::CursorStore;
-pub use peer::PeerManager;
+pub use peer::{PeerManager, PeerCircuitState};
 pub use stream::{StreamTailer, CdcEvent};
 pub use sync_engine::{SyncEngineRef, NoOpSyncEngine, SyncError};
