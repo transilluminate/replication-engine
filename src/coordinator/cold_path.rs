@@ -65,6 +65,9 @@ pub async fn run_repair<S: SyncEngineRef + Send + Sync + 'static>(
     let span = tracing::info_span!("cold_path");
 
     async move {
+        // Mark initial shutdown value as seen so changed() only fires on actual changes
+        let _ = shutdown_rx.borrow_and_update();
+
         let interval = config.interval();
 
         info!(
@@ -75,6 +78,8 @@ pub async fn run_repair<S: SyncEngineRef + Send + Sync + 'static>(
         );
 
         let mut timer = tokio::time::interval(interval);
+        // Skip missed ticks instead of bursting to catch up
+        timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         // Track per-peer backoff state: (consecutive_failures, backoff_until)
         let mut peer_backoff: HashMap<String, (u32, Instant)> = HashMap::new();
@@ -82,12 +87,20 @@ pub async fn run_repair<S: SyncEngineRef + Send + Sync + 'static>(
         loop {
             // Wait for next interval or shutdown
             tokio::select! {
-                _ = timer.tick() => {},
-                _ = shutdown_rx.changed() => {
-                    if *shutdown_rx.borrow() {
+                biased;
+                
+                // Priority: check shutdown first
+                result = shutdown_rx.changed() => {
+                    if result.is_err() || *shutdown_rx.borrow() {
                         info!("Shutdown signal received, stopping repair task");
                         break;
                     }
+                    // Value changed but not to shutdown - continue waiting
+                    continue;
+                }
+                
+                _ = timer.tick() => {
+                    // Time to run a repair cycle
                 }
             }
 

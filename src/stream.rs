@@ -32,7 +32,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Read;
 use std::time::Duration;
-use tracing::{debug, trace, warn};
+use tracing::{trace, warn};
 
 /// zstd magic bytes for decompression detection
 const ZSTD_MAGIC: [u8; 4] = [0x28, 0xB5, 0x2F, 0xFD];
@@ -363,7 +363,7 @@ impl StreamTailer {
         }
 
         if !events.is_empty() {
-            debug!(
+            trace!(
                 peer_id = %self.peer_id,
                 count = events.len(),
                 first_id = %events.first().map(|e| e.stream_id.as_str()).unwrap_or(""),
@@ -419,7 +419,7 @@ impl StreamTailer {
         let events = self.parse_entries_parallel(result).await;
 
         if !events.is_empty() {
-            debug!(
+            trace!(
                 peer_id = %self.peer_id,
                 count = events.len(),
                 first_id = %events.first().map(|e| e.stream_id.as_str()).unwrap_or(""),

@@ -401,23 +401,31 @@ impl<S: SyncEngineRef> ReplicationEngine<S> {
         let mut shutdown_rx = self.shutdown_rx.clone();
 
         let handle = tokio::spawn(async move {
+            // Mark initial shutdown value as seen so changed() only fires on actual changes
+            let _ = shutdown_rx.borrow_and_update();
+
             let flush_interval = std::time::Duration::from_secs(5);
             let mut timer = tokio::time::interval(flush_interval);
+            timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
             loop {
                 tokio::select! {
+                    biased;
+                    
+                    result = shutdown_rx.changed() => {
+                        if result.is_err() || *shutdown_rx.borrow() {
+                            debug!("Cursor flush task stopping");
+                            break;
+                        }
+                        continue;
+                    }
+                    
                     _ = timer.tick() => {
                         let store_guard = cursor_store.read().await;
                         if let Some(ref store) = *store_guard {
                             if let Err(e) = store.flush_dirty().await {
                                 warn!(error = %e, "Failed to flush cursors");
                             }
-                        }
-                    }
-                    _ = shutdown_rx.changed() => {
-                        if *shutdown_rx.borrow() {
-                            debug!("Cursor flush task stopping");
-                            break;
                         }
                     }
                 }
@@ -438,6 +446,9 @@ impl<S: SyncEngineRef> ReplicationEngine<S> {
         let config = self.config.settings.peer_health.clone();
 
         let handle = tokio::spawn(async move {
+            // Mark initial shutdown value as seen so changed() only fires on actual changes
+            let _ = shutdown_rx.borrow_and_update();
+
             let ping_interval = std::time::Duration::from_secs(config.ping_interval_sec);
             let idle_threshold_ms = config.idle_threshold_sec * 1000;
             let mut timer = tokio::time::interval(ping_interval);
@@ -450,6 +461,16 @@ impl<S: SyncEngineRef> ReplicationEngine<S> {
 
             loop {
                 tokio::select! {
+                    biased;
+                    
+                    result = shutdown_rx.changed() => {
+                        if result.is_err() || *shutdown_rx.borrow() {
+                            debug!("Peer health task stopping");
+                            break;
+                        }
+                        continue;
+                    }
+                    
                     _ = timer.tick() => {
                         // Check each connected peer
                         for peer in peer_manager.all() {
@@ -488,12 +509,6 @@ impl<S: SyncEngineRef> ReplicationEngine<S> {
                                     peer.mark_disconnected().await;
                                 }
                             }
-                        }
-                    }
-                    _ = shutdown_rx.changed() => {
-                        if *shutdown_rx.borrow() {
-                            debug!("Peer health task stopping");
-                            break;
                         }
                     }
                 }

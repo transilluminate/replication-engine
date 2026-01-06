@@ -95,6 +95,9 @@ pub async fn run_tailer<S: SyncEngineRef>(
     async move {
         info!("Starting hot path tailer");
 
+        // Mark initial shutdown value as seen so changed() only fires on actual changes
+        let _ = shutdown_rx.borrow_and_update();
+
         // Track if we're currently catching up (to decrement on exit)
         let mut is_catching_up = false;
 
@@ -156,6 +159,12 @@ pub async fn run_tailer<S: SyncEngineRef>(
         let mut current_backoff = error_backoff;
 
         loop {
+            // Check for shutdown at start of each iteration
+            if *shutdown_rx.borrow() {
+                info!("Shutdown signal received");
+                break;
+            }
+
             iteration_count = iteration_count.wrapping_add(1);
 
             // Get connection
@@ -163,16 +172,13 @@ pub async fn run_tailer<S: SyncEngineRef>(
             let mut conn = match conn {
                 Some(c) => c,
                 None => {
-                    // Check shutdown while waiting for reconnect
-                    tokio::select! {
-                        _ = shutdown_rx.changed() => {
-                            if *shutdown_rx.borrow() {
-                                break;
-                            }
-                        }
-                        _ = tokio::time::sleep(Duration::from_secs(1)) => {}
-                    }
+                    // No connection - wait before retry
                     warn!("Peer disconnected, waiting for reconnect");
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    // Check shutdown after sleep
+                    if *shutdown_rx.borrow() {
+                        break;
+                    }
                     continue;
                 }
             };
@@ -204,21 +210,9 @@ pub async fn run_tailer<S: SyncEngineRef>(
                 }
             } else {
                 // Tailing mode: use XREAD with blocking for efficient real-time streaming
-                tokio::select! {
-                    biased;
-                    
-                    // Priority: check shutdown first
-                    _ = shutdown_rx.changed() => {
-                        if *shutdown_rx.borrow() {
-                            info!("Shutdown signal received during read");
-                            break;
-                        }
-                        continue;
-                    }
-                    
-                    // Read from stream (may block up to block_timeout)
-                    result = tailer.read_events_checked(&mut conn, &cursor) => result,
-                }
+                // XREAD blocks for block_timeout (5s default), so this naturally rate-limits
+                // We check shutdown at the start of each iteration via borrow()
+                tailer.read_events_checked(&mut conn, &cursor).await
             };
             
             // Record read latency (includes network round-trip)
@@ -249,7 +243,9 @@ pub async fn run_tailer<S: SyncEngineRef>(
                             continue;
                         }
                         ReadResult::Empty => {
-                            // Stream is empty, nothing to do
+                            // Stream is empty or doesn't exist yet - sleep to avoid tight loop
+                            debug!("Stream empty, waiting before retry");
+                            tokio::time::sleep(Duration::from_secs(1)).await;
                             continue;
                         }
                         ReadResult::Events(events) if events.is_empty() => {
