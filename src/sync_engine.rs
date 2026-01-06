@@ -124,6 +124,23 @@ pub trait SyncEngineRef: Send + Sync + 'static {
 
     /// Fetch an item by key (for cold path repair).
     fn get(&self, key: &str) -> BoxFuture<'_, Option<Vec<u8>>>;
+    
+    /// Get clean branches (no pending merkle recalcs) with their hashes.
+    ///
+    /// Returns branches that are safe to compare with peers.
+    /// Branches with pending writes should be skipped during cold path sync.
+    fn get_clean_branches(&self) -> BoxFuture<'_, Vec<(String, [u8; 32])>> {
+        // Default: return empty (no branch hygiene info available)
+        Box::pin(async { Ok(Vec::new()) })
+    }
+    
+    /// Check if a specific branch is clean (no pending merkle recalcs).
+    ///
+    /// Returns `true` if the branch has no dirty items and is safe to compare.
+    fn is_branch_clean(&self, _prefix: &str) -> BoxFuture<'_, bool> {
+        // Default: assume clean (conservative for mocks)
+        Box::pin(async { Ok(true) })
+    }
 }
 
 /// Implementation of SyncEngineRef for the real SyncEngine.
@@ -171,27 +188,46 @@ impl SyncEngineRef for sync_engine::SyncEngine {
 
     fn get_merkle_root(&self) -> BoxFuture<'_, Option<[u8; 32]>> {
         Box::pin(async move {
-            self.get_merkle_root().await.map_err(|e| SyncError(e.to_string()))
+            Ok(self.get_merkle_root().await.ok().flatten())
         })
     }
 
     fn get_merkle_children(&self, path: &str) -> BoxFuture<'_, Vec<(String, [u8; 32])>> {
         let path = path.to_string();
         Box::pin(async move {
-            let children_map = self.get_merkle_children(&path).await.map_err(|e| SyncError(e.to_string()))?;
-            // Convert BTreeMap to Vec
-            Ok(children_map.into_iter().collect())
+            Ok(match self.get_merkle_children(&path).await {
+                Ok(children_map) => children_map.into_iter().collect(),
+                Err(_) => Vec::new(),
+            })
         })
     }
 
     fn get(&self, key: &str) -> BoxFuture<'_, Option<Vec<u8>>> {
         let key = key.to_string();
         Box::pin(async move {
-            match self.get(&key).await {
-                Ok(Some(item)) => Ok(Some(item.content)),
-                Ok(None) => Ok(None),
-                Err(e) => Err(SyncError(e.to_string())),
-            }
+            Ok(match self.get(&key).await {
+                Ok(Some(item)) => Some(item.content),
+                _ => None,
+            })
+        })
+    }
+    
+    fn get_clean_branches(&self) -> BoxFuture<'_, Vec<(String, [u8; 32])>> {
+        Box::pin(async move {
+            Ok(match self.get_clean_branches().await {
+                Ok(branches_map) => branches_map.into_iter().collect(),
+                Err(_) => Vec::new(),
+            })
+        })
+    }
+    
+    fn is_branch_clean(&self, prefix: &str) -> BoxFuture<'_, bool> {
+        let prefix = prefix.to_string();
+        Box::pin(async move {
+            Ok(match self.branch_dirty_count(&prefix).await {
+                Ok(count) => count == 0,
+                Err(_) => false, // Assume dirty on error (conservative)
+            })
         })
     }
 }

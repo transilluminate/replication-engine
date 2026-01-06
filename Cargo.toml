@@ -12,7 +12,7 @@ categories = ["database", "network-programming"]
 
 [dependencies]
 # Foundation for replication-engine
-sync-engine = "0.2.6"
+sync-engine = { path = "../sync-engine", version = "0.2.15" }
 
 # Async runtime
 tokio = { version = "1", features = ["full", "sync", "time", "signal"] }
