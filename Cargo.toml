@@ -12,7 +12,7 @@ categories = ["database", "network-programming"]
 
 [dependencies]
 # Foundation for replication-engine
-sync-engine = { path = "../sync-engine", version = "0.2.15" }
+sync-engine = "0.2.16"
 
 # Async runtime
 tokio = { version = "1", features = ["full", "sync", "time", "signal"] }
@@ -85,3 +85,8 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# Local development: use sibling sync-engine checkout
+# This section is ignored during `cargo publish`
+[patch.crates-io]
+sync-engine = { path = "../sync-engine" }
