@@ -18,9 +18,8 @@ This dual approach ensures both speed (hot path catches changes immediately) and
 ```
 Node A                                   Node B
 ┌─────────────────┐                     ┌─────────────────┐
-│   sync-engine   │                     │   sync-engine   │
-│   writes to     │                     │                 │
-│  __local__:cdc  │                     │                 │
+│  sync-engine    │                     │   sync-engine   │
+│  writes to cdc  │                     │                 │
 └────────┬────────┘                     └────────▲────────┘
          │                                       │
          │ CDC events                            │ submit()
@@ -58,7 +57,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-replication-engine = "0.1.2"
+replication-engine = "0.1.3"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -98,12 +97,12 @@ The hot path tails each peer's CDC stream for low-latency replication:
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                         Hot Path                             │
-│  XREAD __local__:cdc → Parse CDC → Dedup → submit() → Cursor │
+│  XREAD cdc → Parse CDC → Dedup → submit() → Cursor │
 └──────────────────────────────────────────────────────────────┘
 ```
 
 **Flow:**
-1. `XREAD BLOCK 5000` on peer's `__local__:cdc` stream
+1. `XREAD BLOCK 5000` on peer's `cdc` stream
 2. Parse CDC events (PUT with zstd-compressed payload, DELETE)
 3. Batch deduplicate using `is_current(key, hash)` check
 4. Apply to local sync-engine via `submit()`/`delete()`

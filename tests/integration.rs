@@ -56,7 +56,7 @@ async fn stream_tailer_reads_single_event() {
     // Create a stream tailer
     let tailer = StreamTailer::new(
         peer.node_id.clone(),
-        "__local__:cdc".to_string(),
+        "cdc".to_string(),
         Duration::from_secs(1),
         100,
     );
@@ -88,7 +88,7 @@ async fn stream_tailer_reads_multiple_events_in_order() {
 
     let tailer = StreamTailer::new(
         "peer-1".to_string(),
-        "__local__:cdc".to_string(),
+        "cdc".to_string(),
         Duration::from_secs(1),
         100,
     );
@@ -118,7 +118,7 @@ async fn stream_tailer_resumes_from_cursor() {
 
     let tailer = StreamTailer::new(
         "peer-1".to_string(),
-        "__local__:cdc".to_string(),
+        "cdc".to_string(),
         Duration::from_secs(1),
         100,
     );
@@ -140,7 +140,7 @@ async fn stream_tailer_handles_empty_stream() {
 
     let tailer = StreamTailer::new(
         "peer-1".to_string(),
-        "__local__:cdc".to_string(),
+        "cdc".to_string(),
         Duration::from_millis(100), // Short timeout for test
         100,
     );
@@ -172,7 +172,7 @@ async fn stream_tailer_reads_compressed_data() {
 
     let tailer = StreamTailer::new(
         "peer-1".to_string(),
-        "__local__:cdc".to_string(),
+        "cdc".to_string(),
         Duration::from_secs(1),
         100,
     );
@@ -205,7 +205,7 @@ async fn stream_tailer_detects_trimmed_stream() {
 
     let tailer = StreamTailer::new(
         "peer-trim".to_string(),
-        "__local__:cdc".to_string(),
+        "cdc".to_string(),
         Duration::from_millis(100),
         100,
     );
@@ -225,7 +225,7 @@ async fn stream_tailer_detects_trimmed_stream() {
 
     // Trim the stream to keep only the last 2 entries
     let _: () = redis::cmd("XTRIM")
-        .arg("__local__:cdc")
+        .arg("cdc")
         .arg("MAXLEN")
         .arg(2)
         .query_async(&mut conn)
@@ -313,13 +313,13 @@ async fn multiple_peers_independent_streams() {
     // Read from each
     let tailer1 = StreamTailer::new(
         peer1.node_id.clone(),
-        "__local__:cdc".to_string(),
+        "cdc".to_string(),
         Duration::from_secs(1),
         100,
     );
     let tailer2 = StreamTailer::new(
         peer2.node_id.clone(),
-        "__local__:cdc".to_string(),
+        "cdc".to_string(),
         Duration::from_secs(1),
         100,
     );
@@ -374,7 +374,7 @@ async fn cursor_survives_reconnection() {
         // Read from cursor should only get id3
         let tailer = StreamTailer::new(
             "peer-1".to_string(),
-            "__local__:cdc".to_string(),
+            "cdc".to_string(),
             Duration::from_secs(1),
             100,
         );
@@ -901,7 +901,7 @@ async fn stream_tailer_respects_batch_size() {
     // Create tailer with batch_size=3
     let tailer = StreamTailer::new(
         "peer-batch".to_string(),
-        "__local__:cdc".to_string(),
+        "cdc".to_string(),
         Duration::from_millis(100),
         3, // Only 3 at a time
     );
@@ -934,7 +934,7 @@ async fn stream_tailer_xrange_catchup() {
 
     let tailer = StreamTailer::new(
         "peer-xrange".to_string(),
-        "__local__:cdc".to_string(),
+        "cdc".to_string(),
         Duration::from_millis(100),
         100,
     );
@@ -960,7 +960,7 @@ async fn stream_tailer_get_stream_info() {
 
     let tailer = StreamTailer::new(
         "peer-info".to_string(),
-        "__local__:cdc".to_string(),
+        "cdc".to_string(),
         Duration::from_millis(100),
         100,
     );
@@ -992,7 +992,7 @@ async fn stream_tailer_cursor_validity() {
 
     let tailer = StreamTailer::new(
         "peer-validity".to_string(),
-        "__local__:cdc".to_string(),
+        "cdc".to_string(),
         Duration::from_millis(100),
         100,
     );
@@ -1213,28 +1213,28 @@ async fn stream_handles_malformed_events() {
 
     // Add a well-formed event first (no hash - hash validation is separate concern)
     let _: String = conn.xadd(
-        "__local__:cdc",
+        "cdc",
         "*",
         &[("op", "PUT"), ("key", "good.1"), ("data", "data1")]
     ).await.unwrap();
 
     // Add event missing 'key' field
     let _: String = conn.xadd(
-        "__local__:cdc",
+        "cdc",
         "*",
         &[("op", "PUT"), ("data", "orphan")]
     ).await.unwrap();
 
     // Add event missing 'op' field
     let _: String = conn.xadd(
-        "__local__:cdc",
+        "cdc",
         "*",
         &[("key", "orphan.key"), ("data", "orphan")]
     ).await.unwrap();
 
     // Add another well-formed event
     let _: String = conn.xadd(
-        "__local__:cdc",
+        "cdc",
         "*",
         &[("op", "DEL"), ("key", "good.2")]
     ).await.unwrap();
@@ -1242,7 +1242,7 @@ async fn stream_handles_malformed_events() {
     // Create stream tailer and read
     let tailer = StreamTailer::new(
         "test-peer".to_string(),
-        "__local__:cdc".to_string(),
+        "cdc".to_string(),
         Duration::from_secs(1),
         100,
     );
@@ -1401,7 +1401,7 @@ async fn stream_trim_during_read() {
     // Add many events (with data field for PUT)
     for i in 0..20 {
         let _: String = conn.xadd(
-            "__local__:cdc",
+            "cdc",
             "*",
             &[("op", "PUT"), ("key", &format!("item.{}", i)), ("data", &format!("data.{}", i))]
         ).await.unwrap();
@@ -1409,7 +1409,7 @@ async fn stream_trim_during_read() {
 
     // Get the 10th event ID (we'll use this as our "old" cursor)
     let entries: Vec<(String, Vec<(String, String)>)> = redis::cmd("XRANGE")
-        .arg("__local__:cdc")
+        .arg("cdc")
         .arg("-")
         .arg("+")
         .arg("COUNT")
@@ -1423,7 +1423,7 @@ async fn stream_trim_during_read() {
     // Use XTRIM with MINID to force trim (APPROX is too fuzzy for testing)
     // Get the 18th ID and trim everything before it
     let all_entries: Vec<(String, Vec<(String, String)>)> = redis::cmd("XRANGE")
-        .arg("__local__:cdc")
+        .arg("cdc")
         .arg("-")
         .arg("+")
         .query_async(&mut conn)
@@ -1433,7 +1433,7 @@ async fn stream_trim_during_read() {
     // Keep only the last 2 entries by using MINID on the 18th entry
     let minid = all_entries[18].0.clone();
     let _: usize = redis::cmd("XTRIM")
-        .arg("__local__:cdc")
+        .arg("cdc")
         .arg("MINID")
         .arg(&minid)
         .query_async(&mut conn)
@@ -1443,7 +1443,7 @@ async fn stream_trim_during_read() {
     // Now our cursor (tenth_id) is older than the oldest entry
     let tailer = StreamTailer::new(
         "trim-test".to_string(),
-        "__local__:cdc".to_string(),
+        "cdc".to_string(),
         Duration::from_secs(1),
         100,
     );
@@ -1509,7 +1509,7 @@ async fn multiple_peers_different_positions() {
     let store = CursorStore::new(&db_path).await.unwrap();
 
     // Read from peer1 first - all events
-    let tailer1 = StreamTailer::new("multi-1".to_string(), "__local__:cdc".to_string(), Duration::from_secs(1), 100);
+    let tailer1 = StreamTailer::new("multi-1".to_string(), "cdc".to_string(), Duration::from_secs(1), 100);
     let mut conn1 = connection_manager(&peer1.redis_url).await;
     let events1 = tailer1.read_events(&mut conn1, "0").await.unwrap();
     assert_eq!(events1.len(), 5);
@@ -1518,7 +1518,7 @@ async fn multiple_peers_different_positions() {
     store.set("multi-1", &events1.last().unwrap().stream_id).await;
 
     // Read from peer2 first 5 only
-    let tailer2 = StreamTailer::new("multi-2".to_string(), "__local__:cdc".to_string(), Duration::from_secs(1), 5);
+    let tailer2 = StreamTailer::new("multi-2".to_string(), "cdc".to_string(), Duration::from_secs(1), 5);
     let mut conn2 = connection_manager(&peer2.redis_url).await;
     let events2_batch1 = tailer2.read_events(&mut conn2, "0").await.unwrap();
     assert_eq!(events2_batch1.len(), 5);
@@ -1579,7 +1579,7 @@ async fn stream_empty_returns_empty() {
     // Create tailer for empty stream (no events added)
     let tailer = StreamTailer::new(
         "empty-test".to_string(),
-        "__local__:cdc".to_string(),
+        "cdc".to_string(),
         Duration::from_millis(100), // Short timeout
         100,
     );

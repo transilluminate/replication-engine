@@ -3,7 +3,7 @@
 
 //! Redis Stream consumer for CDC events.
 //!
-//! Tails a peer's `__local__:cdc` stream and parses events.
+//! Tails a peer's `cdc` stream and parses events.
 //!
 //! # Stream Trimming
 //!
@@ -1151,7 +1151,7 @@ mod tests {
     fn test_stream_tailer_new() {
         let tailer = StreamTailer::new(
             "peer-1".to_string(),
-            "__local__:cdc".to_string(),
+            "cdc".to_string(),
             Duration::from_secs(5),
             100,
         );
@@ -1162,7 +1162,7 @@ mod tests {
     fn test_stream_tailer_set_batch_size() {
         let mut tailer = StreamTailer::new(
             "peer-1".to_string(),
-            "__local__:cdc".to_string(),
+            "cdc".to_string(),
             Duration::from_secs(5),
             100,
         );

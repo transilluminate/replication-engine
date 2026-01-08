@@ -287,10 +287,11 @@ fn default_circuit_reset_timeout() -> u64 {
 
 impl PeerConfig {
     /// Get the CDC stream key for this peer.
-    /// Uses the configured prefix + "__local__:cdc".
+    /// Convention: redis_prefix includes trailing colon (e.g., "redsqrl:").
+    /// Result: "redsqrl:cdc" or just "cdc" if no prefix.
     pub fn cdc_stream_key(&self) -> String {
         let prefix = self.redis_prefix.as_deref().unwrap_or("");
-        format!("{}__local__:cdc", prefix)
+        format!("{}cdc", prefix)
     }
 
     /// Create a peer config for testing.
@@ -551,7 +552,15 @@ mod tests {
     #[test]
     fn test_peer_cdc_stream_key() {
         let peer = PeerConfig::for_testing("test-node", "redis://localhost:6379");
-        assert_eq!(peer.cdc_stream_key(), "__local__:cdc");
+        // No prefix -> just "cdc"
+        assert_eq!(peer.cdc_stream_key(), "cdc");
+        
+        // With prefix (includes trailing colon)
+        let peer_with_prefix = PeerConfig {
+            redis_prefix: Some("redsqrl:".to_string()),
+            ..PeerConfig::for_testing("test-node", "redis://localhost:6379")
+        };
+        assert_eq!(peer_with_prefix.cdc_stream_key(), "redsqrl:cdc");
     }
 
     #[test]

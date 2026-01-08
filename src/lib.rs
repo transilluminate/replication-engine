@@ -29,7 +29,7 @@
 //!
 //! ## Two-Path Replication
 //!
-//! 1. **Hot Path (CDC Streams)**: Real-time tailing of peer `__local__:cdc` streams
+//! 1. **Hot Path (CDC Streams)**: Real-time tailing of peer `cdc` streams
 //! 2. **Cold Path (Merkle Repair)**: Periodic anti-entropy using Merkle tree comparison
 //!
 //! ## Usage

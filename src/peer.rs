@@ -728,7 +728,7 @@ mod tests {
 
         let conn = PeerConnection::new(config);
         assert_eq!(conn.node_id(), "test-peer");
-        assert_eq!(conn.cdc_stream_key(), "__local__:cdc");
+        assert_eq!(conn.cdc_stream_key(), "cdc");
     }
 
     #[test]

@@ -56,7 +56,7 @@ impl<'a> TestPeer<'a> {
         let client = redis::Client::open(self.redis_url.as_str())?;
         let mut conn = client.get_multiplexed_async_connection().await?;
 
-        let stream_key = "__local__:cdc";
+        let stream_key = "cdc";
 
         use redis::AsyncCommands;
 
@@ -100,7 +100,7 @@ impl<'a> TestPeer<'a> {
         let client = redis::Client::open(self.redis_url.as_str())?;
         let mut conn = client.get_multiplexed_async_connection().await?;
         use redis::AsyncCommands;
-        conn.xlen("__local__:cdc").await
+        conn.xlen("cdc").await
     }
 
     // =========================================================================
