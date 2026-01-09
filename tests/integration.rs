@@ -395,7 +395,7 @@ async fn cursor_survives_reconnection() {
 #[ignore] // Requires Docker
 async fn engine_replicates_events_to_sync_engine() {
     use common::MockSyncEngine;
-    use replication_engine::config::ReplicationConfig;
+    use replication_engine::config::ReplicationEngineConfig;
     use replication_engine::coordinator::ReplicationEngine;
     use std::sync::Arc;
     use tokio::sync::watch;
@@ -411,9 +411,11 @@ async fn engine_replicates_events_to_sync_engine() {
     let cursor_path = temp_dir.path().join("cursors.db");
 
     // Build config with our test peer
-    let mut config = ReplicationConfig::for_testing("node-local");
+    let mut config = ReplicationEngineConfig::for_testing("node-local");
     config.peers = vec![PeerConfig::for_testing("node-remote", &peer.redis_url)];
     config.cursor.sqlite_path = cursor_path.to_string_lossy().to_string();
+    // Use short block timeout for faster test
+    config.settings.hot_path.block_timeout = "100ms".to_string();
 
     let (_config_tx, config_rx) = watch::channel(config.clone());
 
@@ -433,8 +435,8 @@ async fn engine_replicates_events_to_sync_engine() {
     peer.add_put_event("user.2", r#"{"name": "Bob"}"#).await.unwrap();
     peer.add_delete_event("user.3").await.unwrap();
 
-    // Give hot path time to process (batch delay + processing)
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // Give hot path time to process: empty stream retry (1s) + read + batch flush
+    tokio::time::sleep(Duration::from_millis(2000)).await;
 
     // Verify mock received the events
     let submitted = mock_sync.submitted().await;
@@ -457,7 +459,7 @@ async fn engine_replicates_events_to_sync_engine() {
 #[ignore] // Requires Docker
 async fn engine_deduplicates_current_items() {
     use common::MockSyncEngine;
-    use replication_engine::config::ReplicationConfig;
+    use replication_engine::config::ReplicationEngineConfig;
     use replication_engine::coordinator::ReplicationEngine;
     use std::sync::Arc;
     use tokio::sync::watch;
@@ -471,9 +473,11 @@ async fn engine_deduplicates_current_items() {
     let temp_dir = tempfile::tempdir().unwrap();
     let cursor_path = temp_dir.path().join("cursors.db");
 
-    let mut config = ReplicationConfig::for_testing("node-local");
+    let mut config = ReplicationEngineConfig::for_testing("node-local");
     config.peers = vec![PeerConfig::for_testing("node-remote", &peer.redis_url)];
     config.cursor.sqlite_path = cursor_path.to_string_lossy().to_string();
+    // Short block timeout for faster test
+    config.settings.hot_path.block_timeout = "100ms".to_string();
 
     let (_config_tx, config_rx) = watch::channel(config.clone());
 
@@ -489,7 +493,8 @@ async fn engine_deduplicates_current_items() {
     peer.add_put_event("existing.1", r#"{"already": "synced"}"#).await.unwrap();
     peer.add_put_event("existing.2", r#"{"also": "synced"}"#).await.unwrap();
 
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // Wait longer for empty stream retry + read + process
+    tokio::time::sleep(Duration::from_millis(2000)).await;
 
     // is_current should have been called
     let is_current_calls = mock_sync.is_current_calls().await;

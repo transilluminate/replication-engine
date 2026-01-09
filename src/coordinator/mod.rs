@@ -24,7 +24,7 @@ mod cold_path;
 pub use types::{EngineState, HealthCheck, PeerHealth};
 
 use crate::circuit_breaker::SyncEngineCircuit;
-use crate::config::ReplicationConfig;
+use crate::config::ReplicationEngineConfig;
 use crate::cursor::CursorStore;
 use crate::error::{ReplicationError, Result};
 use crate::metrics;
@@ -52,12 +52,11 @@ use tracing::{debug, error, info, warn};
 /// We only **read** from peer CDC streams and **write** to local sync-engine.
 pub struct ReplicationEngine<S: SyncEngineRef = NoOpSyncEngine> {
     /// Configuration (can be updated at runtime)
-    config: ReplicationConfig,
+    config: ReplicationEngineConfig,
 
     /// Runtime config updates
     #[allow(dead_code)]
-    config_rx: watch::Receiver<ReplicationConfig>,
-
+    config_rx: watch::Receiver<ReplicationEngineConfig>,
     /// Engine state (broadcast to watchers)
     state_tx: watch::Sender<EngineState>,
 
@@ -96,8 +95,8 @@ impl ReplicationEngine<NoOpSyncEngine> {
     /// The engine starts in `Created` state. Call [`start()`](Self::start)
     /// to connect to peers and begin replication.
     pub fn new(
-        config: ReplicationConfig,
-        config_rx: watch::Receiver<ReplicationConfig>,
+        config: ReplicationEngineConfig,
+        config_rx: watch::Receiver<ReplicationEngineConfig>,
     ) -> Self {
         Self::with_sync_engine(config, config_rx, Arc::new(NoOpSyncEngine))
     }
@@ -113,8 +112,8 @@ impl<S: SyncEngineRef> ReplicationEngine<S> {
     /// * `config_rx` - Watch channel for config updates
     /// * `sync_engine` - Reference to local sync-engine (for writes and dedup)
     pub fn with_sync_engine(
-        config: ReplicationConfig,
-        config_rx: watch::Receiver<ReplicationConfig>,
+        config: ReplicationEngineConfig,
+        config_rx: watch::Receiver<ReplicationEngineConfig>,
         sync_engine: Arc<S>,
     ) -> Self {
         let (state_tx, state_rx) = watch::channel(EngineState::Created);
@@ -593,8 +592,8 @@ mod tests {
     use super::*;
     use crate::config::{PeerConfig, CursorConfig};
 
-    fn test_config() -> ReplicationConfig {
-        ReplicationConfig {
+    fn test_config() -> ReplicationEngineConfig {
+        ReplicationEngineConfig {
             local_node_id: "test-node".to_string(),
             peers: vec![],
             settings: Default::default(),

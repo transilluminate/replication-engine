@@ -35,12 +35,12 @@
 //! ## Usage
 //!
 //! ```rust,no_run
-//! use replication_engine::{ReplicationEngine, ReplicationConfig};
+//! use replication_engine::{ReplicationEngine, ReplicationEngineConfig};
 //! use tokio::sync::watch;
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!     let config = ReplicationConfig::default();
+//!     let config = ReplicationEngineConfig::default();
 //!     let (_tx, rx) = watch::channel(config.clone());
 //!     
 //!     let mut engine = ReplicationEngine::new(config, rx);
@@ -66,7 +66,7 @@ pub mod sync_engine;
 // Re-exports for convenience
 pub use circuit_breaker::{CircuitBreaker, CircuitConfig, CircuitError, SyncEngineCircuit};
 pub use config::{
-    ReplicationConfig, ReplicationSettings, PeerConfig, 
+    ReplicationEngineConfig, ReplicationEngineSettings, PeerConfig, 
     HotPathConfig, ColdPathConfig, CursorConfig, 
     SloConfig, PeerHealthConfig,
 };

@@ -10,9 +10,9 @@
 //! # Quick Start
 //!
 //! ```rust
-//! use replication_engine::config::{ReplicationConfig, PeerConfig};
+//! use replication_engine::config::{ReplicationEngineConfig, PeerConfig};
 //!
-//! let config = ReplicationConfig {
+//! let config = ReplicationEngineConfig {
 //!     local_node_id: "node-1".into(),
 //!     peers: vec![
 //!         PeerConfig::for_testing("node-2", "redis://peer2:6379"),
@@ -24,9 +24,9 @@
 //! # Configuration Structure
 //!
 //! ```text
-//! ReplicationConfig
+//! ReplicationEngineConfig
 //! ├── local_node_id: String        # This node's unique ID
-//! ├── settings: ReplicationSettings
+//! ├── settings: ReplicationEngineSettings
 //! │   ├── hot_path: HotPathConfig  # CDC stream tailing
 //! │   ├── cold_path: ColdPathConfig # Merkle anti-entropy  
 //! │   ├── peer_health: PeerHealthConfig
@@ -73,13 +73,13 @@ use std::time::Duration;
 /// - `peers`: List of remote nodes to replicate from.
 /// - `cursor`: SQLite cursor persistence settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReplicationConfig {
+pub struct ReplicationEngineConfig {
     /// The identity of the local node running this engine.
     /// Used to filter "self" out of peer lists and identify our own streams.
     pub local_node_id: String,
 
     /// General settings for the replication logic (timeouts, batch sizes, etc.)
-    pub settings: ReplicationSettings,
+    pub settings: ReplicationEngineSettings,
 
     /// The list of peers to replicate from.
     /// Each peer represents a remote node with a Redis CDC stream.
@@ -91,23 +91,23 @@ pub struct ReplicationConfig {
     pub cursor: CursorConfig,
 }
 
-impl Default for ReplicationConfig {
+impl Default for ReplicationEngineConfig {
     fn default() -> Self {
         Self {
             local_node_id: "local.dev.node.default".to_string(),
-            settings: ReplicationSettings::default(),
+            settings: ReplicationEngineSettings::default(),
             peers: Vec::new(),
             cursor: CursorConfig::default(),
         }
     }
 }
 
-impl ReplicationConfig {
+impl ReplicationEngineConfig {
     /// Create a minimal config for testing.
     pub fn for_testing(local_node_id: &str) -> Self {
         Self {
             local_node_id: local_node_id.to_string(),
-            settings: ReplicationSettings::default(),
+            settings: ReplicationEngineSettings::default(),
             peers: Vec::new(),
             cursor: CursorConfig::in_memory(),
         }
@@ -121,7 +121,7 @@ impl ReplicationConfig {
 /// General settings for the replication logic.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[derive(Default)]
-pub struct ReplicationSettings {
+pub struct ReplicationEngineSettings {
     #[serde(default)]
     pub hot_path: HotPathConfig,
     #[serde(default)]
@@ -762,8 +762,8 @@ mod tests {
     }
 
     #[test]
-    fn test_replication_config_default() {
-        let config = ReplicationConfig::default();
+    fn test_replication_engine_config_default() {
+        let config = ReplicationEngineConfig::default();
         assert_eq!(config.local_node_id, "local.dev.node.default");
         assert!(config.peers.is_empty());
         assert!(config.settings.hot_path.enabled);
@@ -772,21 +772,21 @@ mod tests {
 
     #[test]
     fn test_default_config_serializes() {
-        let config = ReplicationConfig::default();
+        let config = ReplicationEngineConfig::default();
         let json = serde_json::to_string_pretty(&config).unwrap();
         assert!(json.contains("local.dev.node.default"));
     }
 
     #[test]
     fn test_for_testing_config() {
-        let config = ReplicationConfig::for_testing("test-node-1");
+        let config = ReplicationEngineConfig::for_testing("test-node-1");
         assert_eq!(config.local_node_id, "test-node-1");
         assert_eq!(config.cursor.sqlite_path, ":memory:");
     }
 
     #[test]
-    fn test_replication_settings_default() {
-        let settings = ReplicationSettings::default();
+    fn test_replication_engine_settings_default() {
+        let settings = ReplicationEngineSettings::default();
         assert!(settings.hot_path.enabled);
         assert!(settings.cold_path.enabled);
         assert!(settings.peer_health.enabled);
@@ -795,9 +795,9 @@ mod tests {
 
     #[test]
     fn test_config_json_roundtrip() {
-        let config = ReplicationConfig {
+        let config = ReplicationEngineConfig {
             local_node_id: "node-roundtrip".to_string(),
-            settings: ReplicationSettings::default(),
+            settings: ReplicationEngineSettings::default(),
             peers: vec![
                 PeerConfig::for_testing("peer-1", "redis://peer1:6379"),
                 PeerConfig::for_testing("peer-2", "redis://peer2:6379"),
@@ -806,7 +806,7 @@ mod tests {
         };
 
         let json = serde_json::to_string(&config).unwrap();
-        let parsed: ReplicationConfig = serde_json::from_str(&json).unwrap();
+        let parsed: ReplicationEngineConfig = serde_json::from_str(&json).unwrap();
 
         assert_eq!(parsed.local_node_id, "node-roundtrip");
         assert_eq!(parsed.peers.len(), 2);

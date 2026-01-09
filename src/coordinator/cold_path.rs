@@ -154,20 +154,23 @@ pub async fn run_repair<S: SyncEngineRef + Send + Sync + 'static>(
                 duration,
             );
 
+            // Log interesting events at INFO, routine sync checks at DEBUG
+            // Metrics are always recorded above for monitoring
             if stats.items_submitted > 0 {
                 info!(
                     peers_checked = stats.peers_checked,
                     peers_in_sync = stats.peers_in_sync,
                     items_fetched = stats.items_fetched,
                     items_submitted = stats.items_submitted,
-                    duration_ms = duration.as_millis(),
-                    "Repair cycle complete with updates"
+                    duration_ms = duration.as_millis() as u64,
+                    "cold_path: healed divergence"
                 );
-            } else {
+            } else if stats.peers_checked > 0 {
                 debug!(
                     peers_checked = stats.peers_checked,
                     peers_in_sync = stats.peers_in_sync,
-                    "Repair cycle complete, all in sync"
+                    duration_ms = duration.as_millis() as u64,
+                    "cold_path: all in sync"
                 );
             }
         }
@@ -293,11 +296,19 @@ async fn repair_with_peer<S: SyncEngineRef>(
 
     // Get peer's Merkle root
     let peer_root = peer.get_merkle_root().await?;
+    
+    // Format roots for logging
+    let local_root_hex = local_root.map(hex::encode).unwrap_or_else(|| "none".to_string());
+    let peer_root_hex = peer_root.as_ref().map(hex::encode).unwrap_or_else(|| "none".to_string());
 
     // Compare roots
     match (local_root, peer_root.as_ref()) {
         (Some(local), Some(remote)) if local == remote => {
-            debug!(peer_id = %peer_id, "Merkle roots match, in sync");
+            debug!(
+                peer_id = %peer_id, 
+                merkle_root = %local_root_hex,
+                "Merkle roots match, in sync"
+            );
             return Ok(stats);
         }
         (None, None) => {
@@ -309,7 +320,12 @@ async fn repair_with_peer<S: SyncEngineRef>(
             return Ok(stats);
         }
         (None, Some(_)) | (Some(_), Some(_)) => {
-            debug!(peer_id = %peer_id, "Merkle roots differ, drilling down");
+            info!(
+                peer_id = %peer_id, 
+                local_root = %local_root_hex,
+                peer_root = %peer_root_hex,
+                "cold_path: merkle roots differ, drilling down"
+            );
             metrics::record_merkle_divergence(peer_id);
         }
     }

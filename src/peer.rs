@@ -120,9 +120,12 @@ const MERKLE_CACHE_TTL: Duration = Duration::from_secs(5);
 pub struct PeerConnection {
     /// Peer configuration
     pub config: PeerConfig,
-    /// Redis connection (None if disconnected).
+    /// Redis connection for stream operations (XREAD can block).
     /// ConnectionManager is Clone and multiplexed, so sharing is cheap.
     conn: RwLock<Option<ConnectionManager>>,
+    /// Separate Redis connection for point queries (GET, HGET, etc).
+    /// This avoids cold path being blocked by hot path's XREAD BLOCK.
+    query_conn: RwLock<Option<ConnectionManager>>,
     /// Current state
     state: RwLock<PeerState>,
     /// Last successful operation timestamp
@@ -146,6 +149,7 @@ impl PeerConnection {
         Self {
             config,
             conn: RwLock::new(None),
+            query_conn: RwLock::new(None),
             state: RwLock::new(initial_state),
             last_success: AtomicU64::new(0),
             failure_count: AtomicU64::new(0),
@@ -271,7 +275,17 @@ impl PeerConnection {
 
             match conn_result {
                 Ok(Ok(conn)) => {
+                    // Create a second connection for point queries
+                    // This avoids cold path being blocked by hot path's XREAD BLOCK
+                    let query_conn = client.get_connection_manager().await.map_err(|e| {
+                        ReplicationError::PeerConnection {
+                            peer_id: self.config.node_id.clone(),
+                            message: format!("Failed to create query connection: {}", e),
+                        }
+                    })?;
+                    
                     *self.conn.write().await = Some(conn);
+                    *self.query_conn.write().await = Some(query_conn);
                     *self.state.write().await = PeerState::Connected;
                     self.failure_count.store(0, Ordering::Release);
                     self.last_success
@@ -366,11 +380,21 @@ impl PeerConnection {
         }
     }
 
-    /// Get a reference to the connection for operations.
+    /// Get the stream connection (for XREAD and other potentially blocking ops).
     ///
     /// Returns None if not connected.
     pub async fn connection(&self) -> Option<ConnectionManager> {
         self.conn.read().await.clone()
+    }
+
+    /// Get the query connection (for GET, HGET, and other fast point queries).
+    /// 
+    /// This is a separate connection that won't be blocked by XREAD BLOCK
+    /// on the stream connection.
+    ///
+    /// Returns None if not connected.
+    pub async fn query_connection(&self) -> Option<ConnectionManager> {
+        self.query_conn.read().await.clone()
     }
 
     /// Ensure the peer is connected, connecting lazily if needed.
@@ -469,6 +493,21 @@ impl PeerConnection {
     }
 
     // =========================================================================
+    // Key Prefixing (for shared Redis instances)
+    // =========================================================================
+
+    /// Build a prefixed key for this peer's Redis.
+    ///
+    /// Uses the peer's configured `redis_prefix` (e.g., "node-b:").
+    #[inline]
+    fn prefixed_key(&self, suffix: &str) -> String {
+        match &self.config.redis_prefix {
+            Some(prefix) => format!("{}{}", prefix, suffix),
+            None => suffix.to_string(),
+        }
+    }
+
+    // =========================================================================
     // Merkle Tree Queries (for cold path repair)
     // =========================================================================
 
@@ -487,9 +526,10 @@ impl PeerConnection {
             }
         }
 
-        // Cache miss or expired - fetch from peer
+        // Cache miss or expired - fetch from peer using query connection
+        // (query_connection is separate from stream connection to avoid XREAD blocking)
         let start = Instant::now();
-        let conn = self.connection().await.ok_or_else(|| {
+        let conn = self.query_connection().await.ok_or_else(|| {
             ReplicationError::PeerConnection {
                 peer_id: self.config.node_id.clone(),
                 message: "Not connected".to_string(),
@@ -497,8 +537,10 @@ impl PeerConnection {
         })?;
 
         let mut conn = conn;
+        // Root hash is at merkle:hash: (empty path suffix)
+        let key = self.prefixed_key("merkle:hash:");
         let result: Option<String> = redis::cmd("GET")
-            .arg("merkle:hash:")
+            .arg(&key)
             .query_async(&mut conn)
             .await
             .map_err(|e| ReplicationError::PeerConnection {
@@ -548,7 +590,7 @@ impl PeerConnection {
     /// Get children of a Merkle path (sorted by score/position).
     pub async fn get_merkle_children(&self, path: &str) -> Result<Vec<(String, [u8; 32])>> {
         let start = Instant::now();
-        let conn = self.connection().await.ok_or_else(|| {
+        let conn = self.query_connection().await.ok_or_else(|| {
             ReplicationError::PeerConnection {
                 peer_id: self.config.node_id.clone(),
                 message: "Not connected".to_string(),
@@ -556,7 +598,7 @@ impl PeerConnection {
         })?;
 
         let mut conn = conn;
-        let key = format!("merkle:children:{}", path);
+        let key = self.prefixed_key(&format!("merkle:children:{}", path));
 
         // ZRANGE returns items as (member, score) pairs with WITHSCORES
         let items: Vec<(String, f64)> = redis::cmd("ZRANGE")
@@ -577,9 +619,9 @@ impl PeerConnection {
             let child_path = if path.is_empty() {
                 child_name.clone()
             } else {
-                format!("{}/{}", path, child_name)
+                format!("{}.{}", path, child_name)
             };
-            let hash_key = format!("merkle:hash:{}", child_path);
+            let hash_key = self.prefixed_key(&format!("merkle:hash:{}", child_path));
 
             let hex_hash: Option<String> = redis::cmd("GET")
                 .arg(&hash_key)
@@ -613,9 +655,12 @@ impl PeerConnection {
     }
 
     /// Get an item's data by key.
+    /// 
+    /// Returns the raw item content from the peer's Redis.
+    /// Uses JSON.GET for JSON items, GET for binary items.
     pub async fn get_item(&self, key: &str) -> Result<Option<Vec<u8>>> {
         let start = Instant::now();
-        let conn = self.connection().await.ok_or_else(|| {
+        let conn = self.query_connection().await.ok_or_else(|| {
             ReplicationError::PeerConnection {
                 peer_id: self.config.node_id.clone(),
                 message: "Not connected".to_string(),
@@ -623,16 +668,39 @@ impl PeerConnection {
         })?;
 
         let mut conn = conn;
-        let redis_key = format!("item:{}", key);
+        // Items are stored at {prefix}{object_id} in sync-engine
+        let redis_key = self.prefixed_key(key);
 
-        let data: Option<Vec<u8>> = redis::cmd("GET")
+        // First try JSON.GET (most items are JSON)
+        let json_result: redis::RedisResult<Option<String>> = redis::cmd("JSON.GET")
             .arg(&redis_key)
+            .arg("$.payload")
             .query_async(&mut conn)
-            .await
-            .map_err(|e| ReplicationError::PeerConnection {
-                peer_id: self.config.node_id.clone(),
-                message: format!("Failed to get item: {}", e),
-            })?;
+            .await;
+        
+        let data = match json_result {
+            Ok(Some(json_str)) => {
+                // Parse the JSON array response from JSONPath and extract payload
+                // JSON.GET returns ["payload_content"] for $.payload
+                if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(&json_str) {
+                    arr.into_iter().next().map(|payload| {
+                        serde_json::to_vec(&payload).unwrap_or_default()
+                    })
+                } else {
+                    // Might be direct payload string
+                    Some(json_str.into_bytes())
+                }
+            }
+            Ok(None) | Err(_) => {
+                // Fall back to regular GET for binary items
+                redis::cmd("GET")
+                    .arg(&redis_key)
+                    .query_async(&mut conn)
+                    .await
+                    .ok()
+                    .flatten()
+            }
+        };
         
         metrics::record_peer_operation_latency(&self.config.node_id, "get_item", start.elapsed());
 
