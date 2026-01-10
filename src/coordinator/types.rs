@@ -105,7 +105,7 @@ impl std::fmt::Display for EngineState {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```text
 /// let health = engine.health_check().await;
 /// if health.ready {
 ///     // Ready for traffic

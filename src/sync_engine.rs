@@ -33,6 +33,10 @@
 //!         Box::pin(async move { Ok(true) })
 //!     }
 //!
+//!     fn delete_replicated(&self, _key: String) -> Pin<Box<dyn Future<Output = SyncResult<bool>> + Send + '_>> {
+//!         Box::pin(async move { Ok(true) })
+//!     }
+//!
 //!     fn get_merkle_root(&self) -> BoxFuture<'_, Option<[u8; 32]>> {
 //!         Box::pin(async move { Ok(None) })
 //!     }
@@ -101,7 +105,17 @@ pub trait SyncEngineRef: Send + Sync + 'static {
     ) -> Pin<Box<dyn Future<Output = SyncResult<()>> + Send + '_>>;
 
     /// Delete an item from the local sync-engine.
+    /// 
+    /// Note: This emits CDC events. For replicated deletes, use `delete_replicated()`.
     fn delete(
+        &self,
+        key: String,
+    ) -> Pin<Box<dyn Future<Output = SyncResult<bool>> + Send + '_>>;
+
+    /// Delete a replicated item (does NOT emit CDC events).
+    /// 
+    /// Use this for items received via replication to prevent CDC loops.
+    fn delete_replicated(
         &self,
         key: String,
     ) -> Pin<Box<dyn Future<Output = SyncResult<bool>> + Send + '_>>;
@@ -166,6 +180,15 @@ impl SyncEngineRef for sync_engine::SyncEngine {
     ) -> Pin<Box<dyn Future<Output = SyncResult<bool>> + Send + '_>> {
         Box::pin(async move {
             self.delete(&key).await.map_err(|e| SyncError(e.to_string()))
+        })
+    }
+
+    fn delete_replicated(
+        &self,
+        key: String,
+    ) -> Pin<Box<dyn Future<Output = SyncResult<bool>> + Send + '_>> {
+        Box::pin(async move {
+            self.delete_replicated(&key).await.map_err(|e| SyncError(e.to_string()))
         })
     }
 
@@ -261,6 +284,16 @@ impl SyncEngineRef for NoOpSyncEngine {
     ) -> Pin<Box<dyn Future<Output = SyncResult<bool>> + Send + '_>> {
         Box::pin(async move {
             tracing::debug!(key = %key, "NoOp: would delete item");
+            Ok(true)
+        })
+    }
+
+    fn delete_replicated(
+        &self,
+        key: String,
+    ) -> Pin<Box<dyn Future<Output = SyncResult<bool>> + Send + '_>> {
+        Box::pin(async move {
+            tracing::debug!(key = %key, "NoOp: would delete replicated item");
             Ok(true)
         })
     }

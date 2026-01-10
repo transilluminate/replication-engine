@@ -57,7 +57,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-replication-engine = "0.1.3"
+replication-engine = "0.1.5"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -231,7 +231,7 @@ Comprehensive test suite with 200+ tests covering unit, property-based, chaos, a
 
 | Test Suite | Count | Description |
 |------------|-------|-------------|
-| **Unit Tests** | 230 ✅ | Fast, no external deps |
+| **Unit Tests** | 231 ✅ | Fast, no external deps |
 | **Property Tests** | 16 ✅ | Proptest fuzzing for invariants |
 | **Chaos Tests** | 11 ✅ | Failure injection, corruption handling |
 | **Integration Tests** | 44 ✅ | Real Redis via testcontainers |

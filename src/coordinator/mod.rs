@@ -181,7 +181,7 @@ impl<S: SyncEngineRef> ReplicationEngine<S> {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```text
     /// let health = engine.health_check().await;
     /// 
     /// // For /ready endpoint

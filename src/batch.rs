@@ -248,9 +248,9 @@ impl<S: SyncEngineRef> BatchProcessor<S> {
             }
         }
 
-        // Phase 3: Process deletes
+        // Phase 3: Process deletes (use delete_replicated to avoid CDC loops)
         for key in deletes {
-            match self.sync_engine.delete(key.clone()).await {
+            match self.sync_engine.delete_replicated(key.clone()).await {
                 Ok(_deleted) => {
                     result.deleted += 1;
                 }
@@ -259,7 +259,7 @@ impl<S: SyncEngineRef> BatchProcessor<S> {
                         peer_id = %self.peer_id,
                         key = %key,
                         error = %e,
-                        "Failed to delete item"
+                        "Failed to delete replicated item"
                     );
                     result.errors += 1;
                 }
@@ -407,6 +407,14 @@ mod tests {
         }
 
         fn delete(
+            &self,
+            _key: String,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = SyncResult<bool>> + Send + '_>> {
+            self.delete_count.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Ok(true) })
+        }
+
+        fn delete_replicated(
             &self,
             _key: String,
         ) -> std::pin::Pin<Box<dyn std::future::Future<Output = SyncResult<bool>> + Send + '_>> {

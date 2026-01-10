@@ -42,6 +42,8 @@ pub struct RepairStats {
     pub items_fetched: usize,
     /// Number of items submitted to sync-engine
     pub items_submitted: usize,
+    /// Number of items deleted (peer deleted, we sync)
+    pub items_deleted: usize,
     /// Number of errors encountered
     pub errors: usize,
 }
@@ -316,8 +318,14 @@ async fn repair_with_peer<S: SyncEngineRef>(
             return Ok(stats);
         }
         (Some(_), None) => {
-            debug!(peer_id = %peer_id, "Peer has no data, nothing to fetch");
-            return Ok(stats);
+            // Peer has no data but we do - peer may have deleted everything
+            // This is a significant case, we should drill down to sync deletions
+            info!(
+                peer_id = %peer_id,
+                local_root = %local_root_hex,
+                "Peer has no data, checking for deletions to sync"
+            );
+            metrics::record_merkle_divergence(peer_id);
         }
         (None, Some(_)) | (Some(_), Some(_)) => {
             info!(
@@ -330,32 +338,42 @@ async fn repair_with_peer<S: SyncEngineRef>(
         }
     }
 
-    // Drill down to find divergent items
-    let divergent_keys = find_divergent_keys(sync_engine, peer, "").await?;
+    // Drill down to find divergent items (both to fetch and to delete)
+    let divergent = find_divergent_keys(sync_engine, peer, "").await?;
 
-    let total_divergent = divergent_keys.len();
-    let keys_to_process = if total_divergent > max_items {
+    let total_to_fetch = divergent.to_fetch.len();
+    let total_to_delete = divergent.to_delete.len();
+    let total_items = total_to_fetch + total_to_delete;
+    
+    // Apply budget limits
+    let (keys_to_fetch, keys_to_delete) = if total_items > max_items {
         warn!(
             peer_id = %peer_id,
-            total_divergent,
+            total_to_fetch,
+            total_to_delete,
             max_items,
-            "More divergent keys than budget allows, deferring {} to next cycle",
-            total_divergent - max_items
+            "More divergent keys than budget allows, deferring some to next cycle"
         );
-        &divergent_keys[..max_items]
+        // Prioritize fetches over deletes (gets data flowing)
+        let fetch_budget = max_items.min(total_to_fetch);
+        let delete_budget = (max_items - fetch_budget).min(total_to_delete);
+        (
+            &divergent.to_fetch[..fetch_budget],
+            &divergent.to_delete[..delete_budget],
+        )
     } else {
-        &divergent_keys[..]
+        (&divergent.to_fetch[..], &divergent.to_delete[..])
     };
 
     debug!(
         peer_id = %peer_id,
-        divergent_count = total_divergent,
-        processing_count = keys_to_process.len(),
+        to_fetch = keys_to_fetch.len(),
+        to_delete = keys_to_delete.len(),
         "Found divergent keys"
     );
 
     // Fetch and submit divergent items
-    for key in keys_to_process {
+    for key in keys_to_fetch {
         stats.items_fetched += 1;
 
         match peer.get_item(key).await? {
@@ -376,8 +394,26 @@ async fn repair_with_peer<S: SyncEngineRef>(
                 }
             }
             None => {
-                debug!(key = %key, "Item not found on peer, skipping");
+                // Item was deleted between merkle check and fetch - delete locally
+                debug!(key = %key, "Item not found on peer, deleting locally");
+                if let Err(e) = sync_engine.delete_replicated(key.clone()).await {
+                    warn!(key = %key, error = %e, "Failed to delete item via cold path");
+                    stats.errors += 1;
+                } else {
+                    stats.items_deleted += 1;
+                }
             }
+        }
+    }
+
+    // Delete items that peer has deleted (we have in merkle, peer doesn't)
+    for key in keys_to_delete {
+        if let Err(e) = sync_engine.delete_replicated(key.clone()).await {
+            warn!(key = %key, error = %e, "Failed to delete item via cold path");
+            stats.errors += 1;
+        } else {
+            stats.items_deleted += 1;
+            debug!(key = %key, "Deleted item (peer deleted)");
         }
     }
 
@@ -387,14 +423,40 @@ async fn repair_with_peer<S: SyncEngineRef>(
 /// Maximum concurrent Merkle drill-down tasks per level.
 const MAX_PARALLEL_MERKLE_DRILL: usize = 8;
 
+/// Result from drilling down the Merkle tree.
+/// 
+/// Contains both keys to fetch (peer has, we don't or differ) 
+/// and keys to delete (we have, peer deleted).
+#[derive(Debug, Default)]
+struct DivergentKeys {
+    /// Keys that need to be fetched from peer
+    to_fetch: Vec<String>,
+    /// Keys that need to be deleted locally (peer deleted them)
+    to_delete: Vec<String>,
+}
+
+impl DivergentKeys {
+    fn extend(&mut self, other: DivergentKeys) {
+        self.to_fetch.extend(other.to_fetch);
+        self.to_delete.extend(other.to_delete);
+    }
+    
+    fn is_empty(&self) -> bool {
+        self.to_fetch.is_empty() && self.to_delete.is_empty()
+    }
+}
+
 /// Recursively find divergent keys by drilling down the Merkle tree.
+/// 
+/// Returns both keys to fetch (peer has data we need) and keys to delete
+/// (peer deleted, we should sync the deletion).
 /// 
 /// Children at each level are processed in parallel for faster traversal.
 fn find_divergent_keys<'a, S: SyncEngineRef>(
     sync_engine: &'a S,
     peer: &'a PeerConnection,
     path: &'a str,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<String>, ReplicationError>> + Send + 'a>> {
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<DivergentKeys, ReplicationError>> + Send + 'a>> {
     Box::pin(async move {
         // Get local and remote children for this path (in parallel)
         let (local_children, remote_result) = tokio::join!(
@@ -414,9 +476,10 @@ fn find_divergent_keys<'a, S: SyncEngineRef>(
         all_children.extend(local_map.keys().cloned());
         all_children.extend(remote_map.keys().cloned());
 
-        // Collect children that need drill-down
+        // Collect children that need drill-down and direct deletes
         let mut needs_drilldown: Vec<String> = Vec::new();
-        let mut divergent: Vec<String> = Vec::new();
+        let mut needs_delete_drilldown: Vec<String> = Vec::new();
+        let mut result = DivergentKeys::default();
 
         for child_name in all_children {
             let local_hash = local_map.get(&child_name);
@@ -434,17 +497,22 @@ fn find_divergent_keys<'a, S: SyncEngineRef>(
                     continue;
                 }
                 (Some(_), None) => {
-                    // Peer doesn't have this, nothing to fetch
-                    continue;
+                    // We have it, peer doesn't - peer deleted this subtree
+                    // Need to drill down to find all leaves to delete
+                    needs_delete_drilldown.push(child_path);
                 }
-                _ => {
-                    // Divergent or missing locally - need to drill down
+                (None, Some(_)) | (Some(_), Some(_)) => {
+                    // Divergent or missing locally - need to drill down to fetch
                     needs_drilldown.push(child_path);
+                }
+                (None, None) => {
+                    // Neither side has this child - shouldn't happen but skip if it does
+                    continue;
                 }
             }
         }
 
-        // Process drill-downs in parallel batches
+        // Process fetch drill-downs in parallel batches
         for chunk in needs_drilldown.chunks(MAX_PARALLEL_MERKLE_DRILL) {
             let futures: Vec<_> = chunk
                 .iter()
@@ -453,14 +521,14 @@ fn find_divergent_keys<'a, S: SyncEngineRef>(
 
             let results = futures::future::join_all(futures).await;
 
-            for (i, result) in results.into_iter().enumerate() {
-                match result {
+            for (i, sub_result) in results.into_iter().enumerate() {
+                match sub_result {
                     Ok(sub_divergent) => {
                         if sub_divergent.is_empty() {
-                            // This is a leaf node
-                            divergent.push(chunk[i].clone());
+                            // This is a leaf node that needs fetching
+                            result.to_fetch.push(chunk[i].clone());
                         } else {
-                            divergent.extend(sub_divergent);
+                            result.extend(sub_divergent);
                         }
                     }
                     Err(e) => {
@@ -471,7 +539,88 @@ fn find_divergent_keys<'a, S: SyncEngineRef>(
             }
         }
 
-        Ok(divergent)
+        // Process delete drill-downs - find all local leaves to delete
+        for chunk in needs_delete_drilldown.chunks(MAX_PARALLEL_MERKLE_DRILL) {
+            let futures: Vec<_> = chunk
+                .iter()
+                .map(|child_path| find_local_leaves(sync_engine, child_path))
+                .collect();
+
+            let results = futures::future::join_all(futures).await;
+
+            for (i, sub_result) in results.into_iter().enumerate() {
+                match sub_result {
+                    Ok(leaves) => {
+                        if leaves.is_empty() {
+                            // This is a leaf node itself
+                            result.to_delete.push(chunk[i].clone());
+                        } else {
+                            result.to_delete.extend(leaves);
+                        }
+                    }
+                    Err(e) => {
+                        warn!(path = %chunk[i], error = %e, "Failed to find local leaves for delete");
+                    }
+                }
+            }
+        }
+
+        Ok(result)
+    })
+}
+
+/// Find all leaf keys under a local Merkle path.
+/// 
+/// Used when peer has deleted a subtree - we need to find all local leaves to delete.
+fn find_local_leaves<'a, S: SyncEngineRef>(
+    sync_engine: &'a S,
+    path: &'a str,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<String>, ReplicationError>> + Send + 'a>> {
+    Box::pin(async move {
+        let children = sync_engine.get_merkle_children(path).await.unwrap_or_default();
+        
+        if children.is_empty() {
+            // This is a leaf
+            return Ok(vec![]);
+        }
+
+        let mut leaves = Vec::new();
+        
+        // Process children in batches
+        let child_paths: Vec<_> = children.iter().map(|(name, _)| {
+            if path.is_empty() {
+                name.clone()
+            } else {
+                format!("{}/{}", path, name)
+            }
+        }).collect();
+
+        for chunk in child_paths.chunks(MAX_PARALLEL_MERKLE_DRILL) {
+            let futures: Vec<_> = chunk
+                .iter()
+                .map(|child_path| find_local_leaves(sync_engine, child_path.as_str()))
+                .collect();
+
+            let results = futures::future::join_all(futures).await;
+
+            for (i, sub_result) in results.into_iter().enumerate() {
+                match sub_result {
+                    Ok(sub_leaves) => {
+                        if sub_leaves.is_empty() {
+                            // This child is a leaf
+                            leaves.push(chunk[i].clone());
+                        } else {
+                            leaves.extend(sub_leaves);
+                        }
+                    }
+                    Err(e) => {
+                        warn!(path = %chunk[i], error = %e, "Failed to find local leaves");
+                    }
+                }
+            }
+        }
+
+        Ok(leaves)
     })
 }
 
@@ -486,6 +635,7 @@ mod tests {
         assert_eq!(stats.peers_in_sync, 0);
         assert_eq!(stats.items_fetched, 0);
         assert_eq!(stats.items_submitted, 0);
+        assert_eq!(stats.items_deleted, 0);
         assert_eq!(stats.errors, 0);
     }
 
@@ -496,6 +646,7 @@ mod tests {
             peers_in_sync: 3,
             items_fetched: 100,
             items_submitted: 50,
+            items_deleted: 10,
             errors: 2,
         };
         let cloned = stats.clone();
@@ -503,6 +654,7 @@ mod tests {
         assert_eq!(cloned.peers_in_sync, 3);
         assert_eq!(cloned.items_fetched, 100);
         assert_eq!(cloned.items_submitted, 50);
+        assert_eq!(cloned.items_deleted, 10);
         assert_eq!(cloned.errors, 2);
     }
 
@@ -513,6 +665,7 @@ mod tests {
             peers_in_sync: 1,
             items_fetched: 10,
             items_submitted: 5,
+            items_deleted: 2,
             errors: 0,
         };
         let debug = format!("{:?}", stats);
@@ -521,6 +674,7 @@ mod tests {
         assert!(debug.contains("peers_in_sync: 1"));
         assert!(debug.contains("items_fetched: 10"));
         assert!(debug.contains("items_submitted: 5"));
+        assert!(debug.contains("items_deleted: 2"));
         assert!(debug.contains("errors: 0"));
     }
 
@@ -532,6 +686,7 @@ mod tests {
             peers_in_sync: 10,
             items_fetched: 0,
             items_submitted: 0,
+            items_deleted: 0,
             errors: 0,
         };
         assert_eq!(stats.peers_checked, stats.peers_in_sync);
@@ -546,6 +701,7 @@ mod tests {
             peers_in_sync: 2,
             items_fetched: 150,
             items_submitted: 100,
+            items_deleted: 5,
             errors: 1,
         };
         // 3 peers were out of sync
@@ -562,9 +718,27 @@ mod tests {
             peers_in_sync: 0,
             items_fetched: 50,
             items_submitted: 10,
+            items_deleted: 5,
             errors: 40,
         };
         // High error rate indicates problems
         assert!(stats.errors > stats.items_submitted);
+    }
+    
+    #[test]
+    fn test_repair_stats_with_deletes() {
+        // Scenario: Sync includes both fetches and deletes
+        let stats = RepairStats {
+            peers_checked: 3,
+            peers_in_sync: 1,
+            items_fetched: 20,
+            items_submitted: 15,
+            items_deleted: 8,
+            errors: 0,
+        };
+        // We deleted items that peer had deleted
+        assert_eq!(stats.items_deleted, 8);
+        // Total work done
+        assert_eq!(stats.items_submitted + stats.items_deleted, 23);
     }
 }

@@ -237,6 +237,17 @@ impl SyncEngineRef for MockSyncEngine {
         })
     }
 
+    fn delete_replicated(
+        &self,
+        key: String,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = SyncResult<bool>> + Send + '_>> {
+        // Same as delete for mock - just record the call
+        Box::pin(async move {
+            self.deletes.write().await.push(DeleteCall { key });
+            Ok(true)
+        })
+    }
+
     fn is_current(
         &self,
         key: &str,
